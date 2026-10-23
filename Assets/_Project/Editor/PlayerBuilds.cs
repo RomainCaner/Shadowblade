@@ -12,6 +12,13 @@ namespace ShadowBlade.EditorTools
     /// </summary>
     public static class PlayerBuilds
     {
+        /// <summary>Reconstruit le menu et l'arène, puis compile la version Windows.</summary>
+        public static void RebuildScenesAndBuildWindows()
+        {
+            MainMenuBuilder.BuildFromCommandLine();
+            BuildWindows();
+        }
+
         public static void BuildWindows()
         {
             string[] args = Environment.GetCommandLineArgs();

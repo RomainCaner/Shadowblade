@@ -109,7 +109,7 @@ namespace ShadowBlade.EditorTools
             return clip;
         }
 
-        static Material CreateTexturedMaterial(string name, string texturePath)
+        public static Material CreateTexturedMaterial(string name, string texturePath)
         {
             Material material = BuilderUtility.CreateMaterial(name, Color.white);
             material.SetTexture("_BaseMap", AssetDatabase.LoadAssetAtPath<Texture2D>(texturePath));

@@ -86,10 +86,11 @@ namespace ShadowBlade.EditorTools
             ParticleSystem deathBurst = CreateBurstPrefab("FX_DeathBurst", fx, 30, new Vector2(2f, 6f), new Vector2(0.4f, 0.8f),
                 new Vector2(0.25f, 0.5f), new Color(0.9f, 0.15f, 0.1f), new Color(0.3f, 0.05f, 0.1f), -0.3f, stretched: false);
 
-            BuildLevel(ground, stone);
+            MedievalArena.Result arena = BuildLevel(ground, stone);
             KayKitCharacters.CharacterAssets kaykit = KayKitCharacters.Prepare();
 
             GameObject player = BuildPlayer(hero, steel, shockwave, fx, kaykit);
+            player.transform.position = arena.PlayerStart;
             CinemachineImpulseSource impulse = BuildCamera(player.transform);
 
             EnemyAI enemyPrefab = BuildEnemyPrefab(new EnemySpec
@@ -138,7 +139,7 @@ namespace ShadowBlade.EditorTools
                 HeavyImpact = 0.75f,
             });
 
-            BuildHud(player, enemyPrefab, bossPrefab, impulse, hitSpark, deathBurst);
+            BuildHud(player, enemyPrefab, bossPrefab, impulse, hitSpark, deathBurst, arena.SpawnPoints);
 
             EditorSceneManager.SaveScene(scene, ArenaScenePath);
             UpdateBuildScenes();
@@ -156,15 +157,65 @@ namespace ShadowBlade.EditorTools
 
         // ---------------------------------------------------------------- Niveau
 
-        static void BuildLevel(Material ground, Material stone)
+        /// <summary>Décor de l'arène. Renvoie le départ du héros et les points d'apparition des ennemis.</summary>
+        static MedievalArena.Result BuildLevel(Material ground, Material stone)
         {
-            // Tout le décor est sous "Level" : le NavMesh y est calculé au lancement.
+            // Tout le décor "solide" est sous "Level" : le NavMesh y est calculé au lancement.
             var level = new GameObject("Level");
             var surface = level.AddComponent<NavMeshSurface>();
             surface.collectObjects = CollectObjects.Children;
             surface.useGeometry = NavMeshCollectGeometry.PhysicsColliders;
             level.AddComponent<RuntimeNavMeshBaker>();
 
+            ConfigureAtmosphere();
+
+            if (MedievalArena.FilesPresent)
+                return MedievalArena.Build(level.transform, new GameObject("Backdrop").transform);
+
+            BuildPrototypeLevel(level, ground, stone);
+            return new MedievalArena.Result
+            {
+                HalfSize = 25f,
+                PlayerStart = new Vector3(0f, 0.1f, 0f),
+                SpawnPoints = new[]
+                {
+                    new Vector3(-18f, 0f, 18f), new Vector3(18f, 0f, 18f),
+                    new Vector3(18f, 0f, -18f), new Vector3(-18f, 0f, -18f),
+                },
+            };
+        }
+
+        /// <summary>Lumière de crépuscule, brume et fond sombre.</summary>
+        static void ConfigureAtmosphere()
+        {
+            var backdrop = new Color(0.13f, 0.11f, 0.17f);
+            Camera camera = Camera.main;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = backdrop;
+
+            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
+            RenderSettings.ambientSkyColor = new Color(0.42f, 0.4f, 0.52f);
+            RenderSettings.ambientEquatorColor = new Color(0.3f, 0.25f, 0.25f);
+            RenderSettings.ambientGroundColor = new Color(0.12f, 0.1f, 0.1f);
+            RenderSettings.fog = true;
+            RenderSettings.fogMode = FogMode.Linear;
+            RenderSettings.fogColor = backdrop;
+            RenderSettings.fogStartDistance = 35f;
+            RenderSettings.fogEndDistance = 90f;
+
+            Light sun = Object.FindFirstObjectByType<Light>();
+            if (sun != null)
+            {
+                sun.transform.rotation = Quaternion.Euler(40f, -35f, 0f);
+                sun.color = new Color(1f, 0.78f, 0.58f);
+                sun.intensity = 1f;
+                sun.shadows = LightShadows.Soft;
+            }
+        }
+
+        /// <summary>Ancienne arène en blocs gris (si les packs de décor sont absents).</summary>
+        static void BuildPrototypeLevel(GameObject level, Material ground, Material stone)
+        {
             GameObject floor = GameObject.CreatePrimitive(PrimitiveType.Plane);
             floor.name = "Floor";
             floor.transform.SetParent(level.transform);
@@ -199,13 +250,6 @@ namespace ShadowBlade.EditorTools
             CreateBlock("Crate_1", new Vector3(14f, 0.75f, -3f), new Vector3(1.5f, 1.5f, 1.5f), stone, props);
             CreateBlock("Crate_2", new Vector3(-15f, 0.75f, 2f), new Vector3(1.5f, 1.5f, 1.5f), stone, props);
             CreateBlock("LowWall", new Vector3(0f, 0.5f, 15f), new Vector3(8f, 1f, 1f), stone, props);
-
-            Light sun = Object.FindFirstObjectByType<Light>();
-            if (sun != null)
-            {
-                sun.transform.rotation = Quaternion.Euler(55f, -35f, 0f);
-                sun.shadows = LightShadows.Soft;
-            }
         }
 
         // ---------------------------------------------------------------- Héros
@@ -290,7 +334,7 @@ namespace ShadowBlade.EditorTools
             mainCamera.gameObject.AddComponent<CinemachineBrain>();
 
             // Vue plongeante de 3/4, à la Darkness Rises.
-            var offset = new Vector3(0f, 9f, -7f);
+            var offset = new Vector3(0f, 7.5f, -6f); // plus proche : les personnages paraissent plus grands
             var cmObject = new GameObject("Player Camera");
             cmObject.transform.SetPositionAndRotation(
                 target.position + offset,
@@ -299,7 +343,7 @@ namespace ShadowBlade.EditorTools
             var cmCamera = cmObject.AddComponent<CinemachineCamera>();
             cmCamera.Follow = target;
             LensSettings lens = cmCamera.Lens;
-            lens.FieldOfView = 45f;
+            lens.FieldOfView = 42f;
             cmCamera.Lens = lens;
 
             var follow = cmObject.AddComponent<CinemachineFollow>();
@@ -430,7 +474,7 @@ namespace ShadowBlade.EditorTools
         // ---------------------------------------------------------------- HUD et partie
 
         static void BuildHud(GameObject player, EnemyAI enemyPrefab, EnemyAI bossPrefab,
-            CinemachineImpulseSource impulse, ParticleSystem hitSpark, ParticleSystem deathBurst)
+            CinemachineImpulseSource impulse, ParticleSystem hitSpark, ParticleSystem deathBurst, Vector3[] positions)
         {
             CreateEventSystem();
             Canvas canvas = CreateCanvas("UI");
@@ -481,13 +525,8 @@ namespace ShadowBlade.EditorTools
             ModalPanel modal = CreateModal(ui);
             CreateAudio(ui);
 
-            // Points d'apparition dans les coins de l'arène.
+            // Points d'apparition des ennemis.
             var spawnRoot = new GameObject("SpawnPoints").transform;
-            Vector3[] positions =
-            {
-                new Vector3(-18f, 0f, 18f), new Vector3(18f, 0f, 18f),
-                new Vector3(18f, 0f, -18f), new Vector3(-18f, 0f, -18f),
-            };
             var points = new Object[positions.Length];
             for (int i = 0; i < positions.Length; i++)
             {
