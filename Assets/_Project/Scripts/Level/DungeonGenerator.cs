@@ -151,8 +151,8 @@ namespace ShadowBlade.Level
                 if (opening) AddGate(room, parent, room.EdgePoint(normal), normal);
             }
 
-            // Gros piliers dans les coins.
-            foreach (var corner in new[] { new Vector3(-1, 0, -1), new Vector3(1, 0, -1), new Vector3(-1, 0, 1), new Vector3(1, 0, 1) })
+            // Gros piliers dans les deux coins du fond (ceux du côté caméra cacheraient l'action).
+            foreach (var corner in new[] { new Vector3(-1, 0, 1), new Vector3(1, 0, 1) })
                 Place(kit.bigPillar, c + new Vector3(corner.x * hx, 0f, corner.z * hz), 0f, k * 1.2f, parent, kit.material);
 
             DecorateWalls(parent, room);
@@ -204,10 +204,11 @@ namespace ShadowBlade.Level
             int openIndex = opening ? segments / 2 : -1;
             bool south = normal == Vector3.back;
 
-            for (int i = 0; i < segments; i++)
+            // Côté caméra (sud) : pas de mur visible, seulement la collision, pour ne jamais cacher le combat.
+            for (int i = 0; i < segments && !south; i++)
             {
                 if (i == openIndex) continue;
-                GameObject prefab = south ? kit.wallHalf : boss ? kit.walls[0] : kit.walls[random.Next(kit.walls.Length)];
+                GameObject prefab = boss ? kit.walls[0] : kit.walls[random.Next(kit.walls.Length)];
                 Place(prefab, edge + along * (-segments * S / 2f + S * (i + 0.5f)), yaw, k, parent, kit.material);
             }
 
@@ -293,11 +294,8 @@ namespace ShadowBlade.Level
                 Vector3 normal = perpendicular * sign;
                 Vector3 edge = center + normal * (S / 2f);
                 bool south = normal == Vector3.back;
-                for (int i = 0; i < corridorLength; i++)
-                {
-                    GameObject prefab = south ? kit.wallHalf : kit.walls[0];
-                    Place(prefab, edge + direction * (-length / 2f + S * (i + 0.5f)), WallYaw(normal), k, parent, kit.material);
-                }
+                for (int i = 0; i < corridorLength && !south; i++)
+                    Place(kit.walls[0], edge + direction * (-length / 2f + S * (i + 0.5f)), WallYaw(normal), k, parent, kit.material);
                 AddBox(parent, edge + normal * 0.4f + Vector3.up * 2.5f, BoxSize(direction, length, 5f, 1.2f), "WallCollider");
             }
 
