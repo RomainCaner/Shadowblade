@@ -38,7 +38,7 @@ namespace ShadowBlade.Animations
             if (animator == null) animator = GetComponentInChildren<Animator>();
 
             ai.AttackWindupStarted += OnWindup;
-            health.Damaged += OnDamaged;
+            ai.Staggered += OnStaggered;
             health.Died += OnDied;
         }
 
@@ -63,7 +63,8 @@ namespace ShadowBlade.Animations
             animator.SetTrigger(AttackId);
         }
 
-        void OnDamaged(float amount, Vector3 source)
+        /// <summary>Réaction aux coups seulement quand l'ennemi est vraiment interrompu.</summary>
+        void OnStaggered()
         {
             if (playHitReactions && !health.IsDead)
             {

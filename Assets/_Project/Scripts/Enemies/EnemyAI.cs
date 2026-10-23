@@ -45,6 +45,9 @@ namespace ShadowBlade.Enemies
         [SerializeField] bool superArmor;
         [SerializeField] float staggerDuration = 0.35f;
         [SerializeField] float knockbackDistance = 0.8f;
+        [Tooltip("Après un étourdissement, l'ennemi ne peut plus être interrompu pendant ce temps : " +
+                 "il encaisse les coups et termine son attaque (évite qu'on le bloque en frappant sans arrêt).")]
+        [SerializeField] float staggerImmunity = 1.5f;
 
         public string DisplayName => displayName;
         public int GoldReward => goldReward;
@@ -54,6 +57,8 @@ namespace ShadowBlade.Enemies
         public event Action<EnemyAI> Died;
         /// <summary>Début d'une attaque : durée de l'avertissement et attaque lourde ou non.</summary>
         public event Action<float, bool> AttackWindupStarted;
+        /// <summary>L'ennemi vient d'être étourdi par un coup (interrompu et repoussé).</summary>
+        public event Action Staggered;
 
         enum State { Spawn, Chase, Windup, Recover, Stagger, Dead }
 
@@ -67,6 +72,7 @@ namespace ShadowBlade.Enemies
         int attackCount;
         bool heavyAttack;
         float windupTotal;
+        float staggerImmuneUntil;
 
         void Awake()
         {
@@ -172,6 +178,8 @@ namespace ShadowBlade.Enemies
         void OnDamaged(float amount, Vector3 source)
         {
             if (state == State.Dead || superArmor || !agent.isOnNavMesh) return;
+            if (Time.time < staggerImmuneUntil) return;
+            staggerImmuneUntil = Time.time + staggerDuration + staggerImmunity;
 
             ShowTelegraph(false);
             state = State.Stagger;
@@ -182,6 +190,7 @@ namespace ShadowBlade.Enemies
             away.y = 0f;
             if (away.sqrMagnitude > 0.001f)
                 agent.Move(away.normalized * knockbackDistance);
+            Staggered?.Invoke();
         }
 
         void OnDied()

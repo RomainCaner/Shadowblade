@@ -250,7 +250,7 @@ namespace ShadowBlade.Level
             if (waveText != null)
             {
                 waveText.text = stage != null
-                    ? $"{stage.Code}  {stage.Title}   •   Vague {Mathf.Max(1, wave)}/{StoryWaveCount}   •   Ennemis : {alive}"
+                    ? $"Mission {stage.Code}   •   Vague {Mathf.Max(1, wave)}/{StoryWaveCount}   •   Ennemis : {alive}"
                     : $"Mode Combat   •   Vague {Mathf.Max(1, wave)}   •   Ennemis : {alive}";
             }
             if (goldText != null) goldText.text = $"Or  +{goldEarned}";
