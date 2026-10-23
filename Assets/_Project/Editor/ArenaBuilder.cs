@@ -50,8 +50,7 @@ namespace ShadowBlade.EditorTools
         [MenuItem("ShadowBlade/Construire l'arène de test", priority = 20)]
         public static void BuildFromMenu()
         {
-            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
-            BuildScene();
+            if (CanBuildNow()) BuildScene();
         }
 
         /// <summary>Point d'entrée pour Unity en ligne de commande (-executeMethod).</summary>
@@ -70,10 +69,16 @@ namespace ShadowBlade.EditorTools
             Material steel = CreateMaterial("Steel", new Color(0.85f, 0.85f, 0.9f), metallic: 0.8f);
             Material shockwave = CreateMaterial("Shockwave", new Color(1f, 0.85f, 0.45f));
             Material telegraph = CreateMaterial("Telegraph", new Color(1f, 0.45f, 0.1f));
+            Material fx = CreateFxMaterial();
+
+            ParticleSystem hitSpark = CreateBurstPrefab("FX_HitSpark", fx, 14, new Vector2(4f, 9f), new Vector2(0.12f, 0.3f),
+                new Vector2(0.08f, 0.18f), new Color(1f, 0.9f, 0.5f), new Color(1f, 0.55f, 0.15f), 1.5f, stretched: true);
+            ParticleSystem deathBurst = CreateBurstPrefab("FX_DeathBurst", fx, 30, new Vector2(2f, 6f), new Vector2(0.4f, 0.8f),
+                new Vector2(0.25f, 0.5f), new Color(0.9f, 0.15f, 0.1f), new Color(0.3f, 0.05f, 0.1f), -0.3f, stretched: false);
 
             BuildLevel(ground, stone);
-            GameObject player = BuildPlayer(hero, steel, shockwave);
-            BuildCamera(player.transform);
+            GameObject player = BuildPlayer(hero, steel, shockwave, fx);
+            CinemachineImpulseSource impulse = BuildCamera(player.transform);
 
             EnemyAI enemyPrefab = BuildEnemyPrefab(new EnemySpec
             {
@@ -106,7 +111,7 @@ namespace ShadowBlade.EditorTools
                 Telegraph = telegraph,
             });
 
-            BuildHud(player, enemyPrefab, bossPrefab);
+            BuildHud(player, enemyPrefab, bossPrefab, impulse, hitSpark, deathBurst);
 
             EditorSceneManager.SaveScene(scene, ArenaScenePath);
             UpdateBuildScenes();
@@ -178,7 +183,7 @@ namespace ShadowBlade.EditorTools
 
         // ---------------------------------------------------------------- Héros
 
-        static GameObject BuildPlayer(Material hero, Material steel, Material shockwave)
+        static GameObject BuildPlayer(Material hero, Material steel, Material shockwave, Material fx)
         {
             var player = new GameObject("Player") { tag = "Player" };
             player.transform.position = new Vector3(0f, 0.1f, 0f);
@@ -203,10 +208,30 @@ namespace ShadowBlade.EditorTools
             Set(skills, "visual", visual);
             Set(skills, "swordPivot", swordPivot);
             Set(skills, "effectMaterial", shockwave);
+
+            // Traînée lumineuse au bout de l'épée (la lame mesure 1,4 m à partir de 0,25 m du pivot).
+            var tip = new GameObject("SwordTip").transform;
+            tip.SetParent(swordPivot, false);
+            tip.localPosition = new Vector3(0f, 0f, 1.6f);
+            var trail = tip.gameObject.AddComponent<TrailRenderer>();
+            trail.sharedMaterial = fx;
+            trail.time = 0.14f;
+            trail.minVertexDistance = 0.05f;
+            trail.widthCurve = AnimationCurve.Linear(0f, 0.45f, 1f, 0f);
+            var trailColors = new Gradient();
+            trailColors.SetKeys(
+                new[] { new GradientColorKey(new Color(1f, 0.95f, 0.8f), 0f), new GradientColorKey(new Color(1f, 0.6f, 0.2f), 1f) },
+                new[] { new GradientAlphaKey(0.9f, 0f), new GradientAlphaKey(0f, 1f) });
+            trail.colorGradient = trailColors;
+            trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            trail.emitting = false;
+
+            var feedback = player.AddComponent<PlayerFeedback>();
+            Set(feedback, "swordTrail", trail);
             return player;
         }
 
-        static void BuildCamera(Transform target)
+        static CinemachineImpulseSource BuildCamera(Transform target)
         {
             Camera mainCamera = Camera.main;
             mainCamera.gameObject.AddComponent<CinemachineBrain>();
@@ -228,6 +253,10 @@ namespace ShadowBlade.EditorTools
             follow.FollowOffset = offset;
             follow.TrackerSettings.BindingMode = BindingMode.WorldSpace;
             follow.TrackerSettings.PositionDamping = new Vector3(0.4f, 0.4f, 0.4f);
+
+            // Tremblements de caméra : la caméra écoute les "impulsions" émises par CombatFeedback.
+            cmObject.AddComponent<CinemachineImpulseListener>();
+            return new GameObject("CameraShake").AddComponent<CinemachineImpulseSource>();
         }
 
         // ---------------------------------------------------------------- Ennemis
@@ -324,7 +353,8 @@ namespace ShadowBlade.EditorTools
 
         // ---------------------------------------------------------------- HUD et partie
 
-        static void BuildHud(GameObject player, EnemyAI enemyPrefab, EnemyAI bossPrefab)
+        static void BuildHud(GameObject player, EnemyAI enemyPrefab, EnemyAI bossPrefab,
+            CinemachineImpulseSource impulse, ParticleSystem hitSpark, ParticleSystem deathBurst)
         {
             CreateEventSystem();
             Canvas canvas = CreateCanvas("UI");
@@ -361,7 +391,19 @@ namespace ShadowBlade.EditorTools
 
             Text message = CreateText("Message", ui, "", 90, new Vector2(0.5f, 0.5f), new Vector2(0f, 150f), new Vector2(1400f, 300f));
 
+            // Chiffres de dégâts (sous les fenêtres, au-dessus du reste du HUD).
+            RectTransform numbersRoot = CreateStretched("DamageNumbers", ui);
+            var damageNumbers = numbersRoot.gameObject.AddComponent<DamageNumbers>();
+            Set(damageNumbers, "font", BuilderUtility.Font);
+
+            var feedback = new GameObject("CombatFeedback").AddComponent<CombatFeedback>();
+            Set(feedback, "damageNumbers", damageNumbers);
+            Set(feedback, "impulse", impulse);
+            Set(feedback, "hitSparkPrefab", hitSpark);
+            Set(feedback, "deathBurstPrefab", deathBurst);
+
             ModalPanel modal = CreateModal(ui);
+            CreateAudio(ui);
 
             // Points d'apparition dans les coins de l'arène.
             var spawnRoot = new GameObject("SpawnPoints").transform;

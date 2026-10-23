@@ -22,6 +22,18 @@ namespace ShadowBlade.Combat
         public event Action<float, Vector3> Damaged;
         public event Action Died;
 
+        /// <summary>N'importe quel personnage a pris des dégâts (pour les effets : chiffres, sons, particules).</summary>
+        public static event Action<Health, float, Vector3> AnyDamaged;
+        public static event Action<Health> AnyDied;
+
+        // Remet à zéro même si le "Domain Reload" est désactivé dans les options de Play Mode.
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStatics()
+        {
+            AnyDamaged = null;
+            AnyDied = null;
+        }
+
         void Awake() => Current = maxHealth;
 
         /// <returns>true si les dégâts ont été appliqués.</returns>
@@ -32,7 +44,12 @@ namespace ShadowBlade.Combat
 
             Current = Mathf.Max(0f, Current - amount);
             Damaged?.Invoke(amount, sourcePosition);
-            if (IsDead) Died?.Invoke();
+            AnyDamaged?.Invoke(this, amount, sourcePosition);
+            if (IsDead)
+            {
+                Died?.Invoke();
+                AnyDied?.Invoke(this);
+            }
             return true;
         }
     }

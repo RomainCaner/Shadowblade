@@ -29,6 +29,21 @@ namespace ShadowBlade.EditorTools
 
         // ---------------------------------------------------------------- Projet
 
+        /// <summary>
+        /// À appeler au début de chaque outil du menu : refuse de construire pendant le mode Play
+        /// (Unity l'interdit) et propose d'enregistrer la scène ouverte.
+        /// </summary>
+        public static bool CanBuildNow()
+        {
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
+            {
+                EditorUtility.DisplayDialog("ShadowBlade",
+                    "Arrête d'abord le mode Play (bouton ▶ en haut), puis relance la construction.", "OK");
+                return false;
+            }
+            return UnityEditor.SceneManagement.EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo();
+        }
+
         /// <summary>Menu principal en premier, puis l'arène (seulement les scènes qui existent).</summary>
         public static void UpdateBuildScenes()
         {
@@ -65,6 +80,98 @@ namespace ShadowBlade.EditorTools
             material.SetFloat("_Smoothness", metallic > 0f ? 0.7f : 0.2f);
             EditorUtility.SetDirty(material);
             return material;
+        }
+
+        /// <summary>
+        /// Matériau additif (lumineux, transparent) pour les particules et la traînée de l'épée.
+        /// La texture ronde "Knob" donne des particules douces au lieu de carrés.
+        /// </summary>
+        public static Material CreateFxMaterial()
+        {
+            EnsureFolder(MaterialsFolder);
+            string path = $"{MaterialsFolder}/FX_Additive.mat";
+            var material = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (material == null)
+            {
+                material = new Material(Shader.Find("Universal Render Pipeline/Particles/Unlit"));
+                AssetDatabase.CreateAsset(material, path);
+            }
+            material.SetTexture("_BaseMap", Knob.texture);
+            material.SetColor("_BaseColor", Color.white);
+            material.SetFloat("_Surface", 1f);   // transparent
+            material.SetFloat("_Blend", 2f);     // additif
+            material.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            material.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.One);
+            material.SetFloat("_SrcBlendAlpha", (float)UnityEngine.Rendering.BlendMode.One);
+            material.SetFloat("_DstBlendAlpha", (float)UnityEngine.Rendering.BlendMode.One);
+            material.SetFloat("_ZWrite", 0f);
+            material.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+            EditorUtility.SetDirty(material);
+            return material;
+        }
+
+        /// <summary>Explosion de particules qui se détruit toute seule (étincelles, mort d'un ennemi).</summary>
+        public static ParticleSystem CreateBurstPrefab(string name, Material material, int count, Vector2 speed,
+            Vector2 lifetime, Vector2 size, Color colorA, Color colorB, float gravity, bool stretched)
+        {
+            var go = new GameObject(name);
+            var ps = go.AddComponent<ParticleSystem>();
+            ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+
+            ParticleSystem.MainModule main = ps.main;
+            main.duration = 0.5f;
+            main.loop = false;
+            main.playOnAwake = true;
+            main.startLifetime = new ParticleSystem.MinMaxCurve(lifetime.x, lifetime.y);
+            main.startSpeed = new ParticleSystem.MinMaxCurve(speed.x, speed.y);
+            main.startSize = new ParticleSystem.MinMaxCurve(size.x, size.y);
+            main.startColor = new ParticleSystem.MinMaxGradient(colorA, colorB);
+            main.gravityModifier = gravity;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.stopAction = ParticleSystemStopAction.Destroy;
+            main.maxParticles = count * 2;
+
+            ParticleSystem.EmissionModule emission = ps.emission;
+            emission.rateOverTime = 0f;
+            emission.SetBursts(new[] { new ParticleSystem.Burst(0f, (short)count) });
+
+            ParticleSystem.ShapeModule shape = ps.shape;
+            shape.shapeType = ParticleSystemShapeType.Sphere;
+            shape.radius = 0.15f;
+
+            ParticleSystem.ColorOverLifetimeModule fade = ps.colorOverLifetime;
+            fade.enabled = true;
+            var gradient = new Gradient();
+            gradient.SetKeys(
+                new[] { new GradientColorKey(Color.white, 0f), new GradientColorKey(Color.white, 1f) },
+                new[] { new GradientAlphaKey(1f, 0f), new GradientAlphaKey(0f, 1f) });
+            fade.color = gradient;
+
+            ParticleSystem.SizeOverLifetimeModule shrink = ps.sizeOverLifetime;
+            shrink.enabled = true;
+            shrink.size = new ParticleSystem.MinMaxCurve(1f, AnimationCurve.Linear(0f, 1f, 1f, 0f));
+
+            var renderer = go.GetComponent<ParticleSystemRenderer>();
+            renderer.sharedMaterial = material;
+            if (stretched)
+            {
+                renderer.renderMode = ParticleSystemRenderMode.Stretch;
+                renderer.velocityScale = 0.04f;
+                renderer.lengthScale = 1f;
+            }
+
+            EnsureFolder(PrefabsFolder);
+            GameObject prefab = PrefabUtility.SaveAsPrefabAsset(go, $"{PrefabsFolder}/{name}.prefab");
+            Object.DestroyImmediate(go);
+            return prefab.GetComponent<ParticleSystem>();
+        }
+
+        /// <summary>Gestionnaire de sons de la scène + sons de clic sur tous les boutons du canvas.</summary>
+        public static void CreateAudio(Transform canvas)
+        {
+            new GameObject("Audio").AddComponent<ShadowBlade.Audio.AudioManager>();
+            canvas.gameObject.AddComponent<ShadowBlade.Audio.ButtonClickSounds>();
         }
 
         // ---------------------------------------------------------------- Valeurs sérialisées

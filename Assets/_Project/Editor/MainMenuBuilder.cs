@@ -19,16 +19,20 @@ namespace ShadowBlade.EditorTools
         [MenuItem("ShadowBlade/Tout construire (menu + arène)", priority = 0)]
         public static void BuildAllFromMenu()
         {
-            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
-            BuildAll();
+            if (CanBuildNow()) BuildAll();
         }
 
         [MenuItem("ShadowBlade/Construire le menu principal", priority = 21)]
         public static void BuildFromMenu()
         {
-            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
-            BuildScene();
+            if (CanBuildNow()) BuildScene();
         }
+
+        // Grise les entrées du menu pendant le mode Play.
+        [MenuItem("ShadowBlade/Tout construire (menu + arène)", true)]
+        [MenuItem("ShadowBlade/Construire le menu principal", true)]
+        [MenuItem("ShadowBlade/Construire l'arène de test", true)]
+        static bool ValidateNotPlaying() => !EditorApplication.isPlaying;
 
         /// <summary>Point d'entrée pour Unity en ligne de commande (-executeMethod).</summary>
         public static void BuildFromCommandLine() => BuildAll();
@@ -176,6 +180,8 @@ namespace ShadowBlade.EditorTools
             Set(controller, "resetProgressButton", reset);
             Set(controller, "settingsCloseButton", close);
             Set(controller, "toastText", toast);
+
+            CreateAudio(ui);
         }
 
         static Button CreateModeCard(string name, Transform parent, string title, string subtitle, Color color,
