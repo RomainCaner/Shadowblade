@@ -66,7 +66,13 @@ namespace ShadowBlade.EditorTools
         /// <summary>Point d'entrée pour Unity en ligne de commande (-executeMethod).</summary>
         public static void BuildFromCommandLine() => BuildScene();
 
-        public static void BuildScene()
+        /// <summary>Scène "Arena" : mode Combat (vagues infinies dans la cour du château).</summary>
+        public static void BuildScene() => BuildCombatScene(dungeon: false);
+
+        /// <summary>Scène "Dungeon" : missions du mode Histoire (donjon généré au lancement).</summary>
+        public static void BuildDungeonScene() => BuildCombatScene(dungeon: true);
+
+        static void BuildCombatScene(bool dungeon)
         {
             ConfigurePlayerSettings();
             EnsureFolder(PrefabsFolder);
@@ -86,11 +92,14 @@ namespace ShadowBlade.EditorTools
             ParticleSystem deathBurst = CreateBurstPrefab("FX_DeathBurst", fx, 30, new Vector2(2f, 6f), new Vector2(0.4f, 0.8f),
                 new Vector2(0.25f, 0.5f), new Color(0.9f, 0.15f, 0.1f), new Color(0.3f, 0.05f, 0.1f), -0.3f, stretched: false);
 
-            MedievalArena.Result arena = BuildLevel(ground, stone);
             KayKitCharacters.CharacterAssets kaykit = KayKitCharacters.Prepare();
+            MedievalArena.Result arena = null;
+            DungeonGenerator generator = null;
+            if (dungeon) generator = BuildDungeonLevel(fx);
+            else arena = BuildLevel(ground, stone);
 
             GameObject player = BuildPlayer(hero, steel, shockwave, fx, kaykit);
-            player.transform.position = arena.PlayerStart;
+            player.transform.position = arena != null ? arena.PlayerStart : new Vector3(0f, 0.1f, 0f);
             CinemachineImpulseSource impulse = BuildCamera(player.transform);
 
             EnemyAI enemyPrefab = BuildEnemyPrefab(new EnemySpec
@@ -139,12 +148,79 @@ namespace ShadowBlade.EditorTools
                 HeavyImpact = 0.75f,
             });
 
-            BuildHud(player, enemyPrefab, bossPrefab, impulse, hitSpark, deathBurst, arena.SpawnPoints);
+            GameControllerBase game;
+            if (dungeon)
+            {
+                var run = new GameObject("DungeonRun").AddComponent<DungeonRunController>();
+                Set(run, "generator", generator);
+                Set(run, "guideArrow", BuildGuideArrow(player.transform, fx));
+                game = run;
+            }
+            else
+            {
+                var arenaGame = new GameObject("ArenaGame").AddComponent<ArenaGameController>();
+                var spawnRoot = new GameObject("SpawnPoints").transform;
+                var points = new Object[arena.SpawnPoints.Length];
+                for (int i = 0; i < points.Length; i++)
+                {
+                    var point = new GameObject("Spawn_" + (i + 1)).transform;
+                    point.SetParent(spawnRoot);
+                    point.position = arena.SpawnPoints[i];
+                    points[i] = point;
+                }
+                SetArray(arenaGame, "spawnPoints", points);
+                game = arenaGame;
+            }
 
-            EditorSceneManager.SaveScene(scene, ArenaScenePath);
+            BuildHud(player, enemyPrefab, bossPrefab, impulse, hitSpark, deathBurst, game);
+
+            string path = dungeon ? DungeonScenePath : ArenaScenePath;
+            EditorSceneManager.SaveScene(scene, path);
             UpdateBuildScenes();
             AssetDatabase.SaveAssets();
-            Debug.Log("ARENA_BUILT " + ArenaScenePath);
+            Debug.Log((dungeon ? "DUNGEON_BUILT " : "ARENA_BUILT ") + path);
+        }
+
+        /// <summary>Niveau du donjon : vide dans l'éditeur, généré au lancement par DungeonGenerator.</summary>
+        static DungeonGenerator BuildDungeonLevel(Material fx)
+        {
+            var level = new GameObject("Level");
+            var surface = level.AddComponent<NavMeshSurface>();
+            surface.collectObjects = CollectObjects.Children;
+            surface.useGeometry = NavMeshCollectGeometry.PhysicsColliders;
+            var generator = level.AddComponent<DungeonGenerator>();
+            level.AddComponent<RuntimeNavMeshBaker>();
+
+            ConfigureAtmosphere();
+            RenderSettings.fogStartDistance = 25f;
+            RenderSettings.fogEndDistance = 60f;
+
+            Set(generator, "kit", DungeonKitBuilder.CreateKit());
+            Set(generator, "outerGroundMaterial", CreateMaterial("DungeonVoid", new Color(0.09f, 0.08f, 0.1f)));
+            return generator;
+        }
+
+        /// <summary>Flèche dorée lumineuse qui indique la salle suivante.</summary>
+        static GuideArrow BuildGuideArrow(Transform player, Material fx)
+        {
+            var arrow = new GameObject("GuideArrow");
+            Material glow = CreateMaterial("GuideArrow", new Color(1f, 0.8f, 0.3f));
+            glow.EnableKeyword("_EMISSION");
+            glow.SetColor("_EmissionColor", new Color(1f, 0.7f, 0.2f) * 2f);
+
+            GameObject shaft = CreateVisualPrimitive(PrimitiveType.Cube, "Shaft", arrow.transform, glow);
+            shaft.transform.localPosition = new Vector3(0f, 0f, -0.25f);
+            shaft.transform.localScale = new Vector3(0.18f, 0.05f, 0.6f);
+            GameObject head = CreateVisualPrimitive(PrimitiveType.Cube, "Head", arrow.transform, glow);
+            head.transform.localPosition = new Vector3(0f, 0f, 0.15f);
+            head.transform.localRotation = Quaternion.Euler(0f, 45f, 0f);
+            head.transform.localScale = new Vector3(0.42f, 0.05f, 0.42f);
+            foreach (Renderer r in arrow.GetComponentsInChildren<Renderer>())
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+
+            var guide = arrow.AddComponent<GuideArrow>();
+            Set(guide, "player", player);
+            return guide;
         }
 
         static void ConfigurePlayerSettings()
@@ -474,7 +550,7 @@ namespace ShadowBlade.EditorTools
         // ---------------------------------------------------------------- HUD et partie
 
         static void BuildHud(GameObject player, EnemyAI enemyPrefab, EnemyAI bossPrefab,
-            CinemachineImpulseSource impulse, ParticleSystem hitSpark, ParticleSystem deathBurst, Vector3[] positions)
+            CinemachineImpulseSource impulse, ParticleSystem hitSpark, ParticleSystem deathBurst, GameControllerBase game)
         {
             CreateEventSystem();
             Canvas canvas = CreateCanvas("UI");
@@ -525,23 +601,11 @@ namespace ShadowBlade.EditorTools
             ModalPanel modal = CreateModal(ui);
             CreateAudio(ui);
 
-            // Points d'apparition des ennemis.
-            var spawnRoot = new GameObject("SpawnPoints").transform;
-            var points = new Object[positions.Length];
-            for (int i = 0; i < positions.Length; i++)
-            {
-                var point = new GameObject("Spawn_" + (i + 1)).transform;
-                point.SetParent(spawnRoot);
-                point.position = positions[i];
-                points[i] = point;
-            }
-
-            var game = new GameObject("ArenaGame").AddComponent<ArenaGameController>();
+            // Le contrôleur de partie (arène ou donjon) reçoit le HUD.
             Set(game, "enemyPrefab", enemyPrefab);
             Set(game, "bossPrefab", bossPrefab);
             Set(game, "player", health);
-            SetArray(game, "spawnPoints", points);
-            Set(game, "waveText", waveText);
+            Set(game, "statusText", waveText);
             Set(game, "goldText", goldText);
             Set(game, "messageText", message);
             Set(game, "modal", modal);

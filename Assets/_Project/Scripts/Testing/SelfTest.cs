@@ -6,6 +6,7 @@ using System.Text;
 using ShadowBlade.Combat;
 using ShadowBlade.Core;
 using ShadowBlade.Enemies;
+using ShadowBlade.Level;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.LowLevel;
@@ -52,16 +53,16 @@ namespace ShadowBlade.Testing
 
             // Course vers l'avant puis vers la droite.
             Stick(new Vector2(0f, 1f));
-            yield return new WaitForSeconds(0.8f);
+            yield return new WaitForSecondsRealtime(0.8f);
             yield return Capture("course");
             Stick(new Vector2(1f, 0f));
-            yield return new WaitForSeconds(0.6f);
+            yield return new WaitForSecondsRealtime(0.6f);
             Stick(Vector2.zero);
 
             // Attendre que les squelettes sortent de terre.
-            yield return new WaitForSeconds(1.2f);
+            yield return new WaitForSecondsRealtime(1.2f);
             yield return Capture("apparition_ennemis");
-            yield return new WaitForSeconds(1.5f);
+            yield return new WaitForSecondsRealtime(1.5f);
 
             // Aller au contact et enchaîner le combo.
             yield return Approach(2f, 5f);
@@ -69,10 +70,10 @@ namespace ShadowBlade.Testing
             for (int i = 0; i < 3; i++)
             {
                 yield return Press(GamepadButton.West);
-                yield return new WaitForSeconds(0.2f);
+                yield return new WaitForSecondsRealtime(0.2f);
                 yield return Capture($"combo_{i + 1}");
             }
-            yield return new WaitForSeconds(0.6f);
+            yield return new WaitForSecondsRealtime(0.6f);
 
             // Compétences.
             string[] skillNames = { "charge", "tourbillon", "frappe_sismique" };
@@ -81,56 +82,63 @@ namespace ShadowBlade.Testing
             {
                 yield return Approach(2.5f, 4f);
                 yield return Press(skillButtons[i]);
-                yield return new WaitForSeconds(i == 1 ? 0.6f : 0.25f);
+                yield return new WaitForSecondsRealtime(i == 1 ? 0.6f : 0.25f);
                 yield return Capture("competence_" + skillNames[i]);
-                yield return new WaitForSeconds(1.2f);
+                yield return new WaitForSecondsRealtime(1.2f);
             }
 
             // Roulade.
             Stick(new Vector2(-1f, 0f));
             yield return Press(GamepadButton.East);
-            yield return new WaitForSeconds(0.15f);
+            yield return new WaitForSecondsRealtime(0.15f);
             yield return Capture("roulade");
             Stick(Vector2.zero);
 
             // Laisser les ennemis attaquer (cercle d'avertissement).
             for (int i = 0; i < 3; i++)
             {
-                yield return new WaitForSeconds(0.9f);
+                yield return new WaitForSecondsRealtime(0.9f);
                 yield return Capture("ennemis_attaquent_" + (i + 1));
             }
 
             // Combat libre pendant 20 secondes : le robot frappe et utilise ses compétences.
-            float end = Time.time + 20f;
+            float end = Time.realtimeSinceStartup + 20f;
             int round = 0;
-            while (Time.time < end && !PlayerDead())
+            while (Time.realtimeSinceStartup < end && !PlayerDead() && !ModalOpen())
             {
                 yield return Approach(2f, 3f);
                 yield return Press(GamepadButton.West);
-                yield return new WaitForSeconds(0.25f);
+                yield return new WaitForSecondsRealtime(0.25f);
                 if (++round % 6 == 0) yield return Press(skillButtons[(round / 6) % 3]);
                 if (round % 15 == 0) yield return Capture("combat_libre_" + round);
             }
             yield return Capture("fin_mode_combat");
 
-            // Mission 1-5 (boss) : valide l'intro, élimine la vague puis affronte le boss.
-            Log("--- Mission 1-5 ---");
+            // Mission 1-5 en donjon : traverse les salles, ouvre les coffres, bat le boss.
+            // Le robot est invincible ici pour pouvoir vérifier tout le parcours jusqu'à la victoire.
+            Log("--- Mission 1-5 (donjon) ---");
             GameSession.StartStage(StoryCatalog.Chapters[0].Stages[4]);
             yield return new WaitForSecondsRealtime(1.5f);
             yield return Capture("mission_intro");
+            yield return CaptureOverview("plan_du_donjon");
             ClickButton("PrimaryButton");
             yield return new WaitForSecondsRealtime(0.5f);
+            Transform hero = PlayerTransform();
+            if (hero != null) hero.GetComponent<Health>().InvulnerabilityCheck = () => true;
+            yield return Capture("salle_entree");
 
-            end = Time.time + 60f;
+            end = Time.realtimeSinceStartup + 180f;
             bool bossSeen = false;
             int bossShots = 0;
-            while (Time.time < end && !PlayerDead())
+            bool fighting = false;
+            int roomsCleared = 0;
+            while (Time.realtimeSinceStartup < end && !PlayerDead() && !VictoryShown())
             {
                 EnemyAI boss = FindObjectsByType<EnemyAI>(FindObjectsSortMode.None).FirstOrDefault(e => e.name.StartsWith("Boss"));
                 if (boss != null && !bossSeen)
                 {
                     bossSeen = true;
-                    yield return new WaitForSeconds(1f);
+                    yield return new WaitForSecondsRealtime(1f);
                     yield return Capture("boss_apparition");
                 }
                 if (boss != null && boss.IsWindingUp && bossShots < 3)
@@ -139,9 +147,35 @@ namespace ShadowBlade.Testing
                     yield return Capture("boss_attaque_" + bossShots);
                 }
 
+                if (NearestEnemy(PlayerTransform()) == null)
+                {
+                    if (fighting)
+                    {
+                        fighting = false;
+                        roomsCleared++;
+                        yield return new WaitForSecondsRealtime(0.6f);
+                        yield return Capture("salle_nettoyee_" + roomsCleared);
+                    }
+
+                    // Coffre à ouvrir en priorité, sinon la salle suivante.
+                    TreasureChest chest = FindObjectsByType<TreasureChest>(FindObjectsSortMode.None).FirstOrDefault();
+                    Vector3? goal = chest != null ? chest.transform.position
+                        : DungeonRunController.Instance != null ? DungeonRunController.Instance.Objective : null;
+                    if (goal.HasValue) yield return MoveTo(goal.Value, 0.4f);
+                    else yield return null;
+                    continue;
+                }
+
+                if (!fighting)
+                {
+                    fighting = true;
+                    yield return new WaitForSecondsRealtime(1.2f);
+                    yield return Capture("combat_salle_" + (roomsCleared + 1));
+                }
+
                 yield return Approach(2.2f, 2f);
                 yield return Press(GamepadButton.West);
-                yield return new WaitForSeconds(0.3f);
+                yield return new WaitForSecondsRealtime(0.3f);
                 if (++round % 7 == 0) yield return Press(skillButtons[(round / 7) % 3]);
                 if (round % 7 == 3) yield return Press(GamepadButton.East);
             }
@@ -172,8 +206,8 @@ namespace ShadowBlade.Testing
         /// <summary>Marche vers l'ennemi le plus proche jusqu'à "distance" mètres (au plus "timeout" secondes).</summary>
         IEnumerator Approach(float distance, float timeout)
         {
-            float end = Time.time + timeout;
-            while (Time.time < end)
+            float end = Time.realtimeSinceStartup + timeout;
+            while (Time.realtimeSinceStartup < end)
             {
                 Transform player = PlayerTransform();
                 EnemyAI enemy = NearestEnemy(player);
@@ -188,6 +222,55 @@ namespace ShadowBlade.Testing
                 yield return null;
             }
             Stick(Vector2.zero);
+            yield return null;
+        }
+
+        IEnumerator MoveTo(Vector3 target, float duration)
+        {
+            float end = Time.realtimeSinceStartup + duration;
+            while (Time.realtimeSinceStartup < end)
+            {
+                Transform player = PlayerTransform();
+                if (player == null) break;
+                Vector3 to = target - player.position;
+                to.y = 0f;
+                if (to.magnitude < 1f) break;
+                Stick(new Vector2(to.x, to.z).normalized);
+                yield return null;
+            }
+            Stick(Vector2.zero);
+        }
+
+        static bool ModalOpen() =>
+            FindObjectsByType<ShadowBlade.UI.ModalPanel>(FindObjectsSortMode.None).Any(m => m.IsVisible);
+
+        static bool VictoryShown() =>
+            FindObjectsByType<UnityEngine.UI.Text>(FindObjectsSortMode.None).Any(t => t.isActiveAndEnabled && t.text == "Victoire");
+
+        /// <summary>Vue du dessus de tout le donjon (caméra temporaire par-dessus la caméra de jeu).</summary>
+        IEnumerator CaptureOverview(string label)
+        {
+            DungeonGenerator generator = FindFirstObjectByType<DungeonGenerator>();
+            if (generator == null) yield break;
+            Bounds b = generator.Bounds;
+            var go = new GameObject("OverviewCamera");
+            var cam = go.AddComponent<Camera>();
+            cam.orthographic = true;
+            cam.orthographicSize = Mathf.Max(b.size.z, b.size.x / cam.aspect) * 0.55f;
+            cam.transform.SetPositionAndRotation(b.center + Vector3.up * 80f, Quaternion.Euler(90f, 0f, 0f));
+            cam.farClipPlane = 200f;
+            cam.depth = 100f;
+            cam.clearFlags = CameraClearFlags.SolidColor;
+            cam.backgroundColor = Color.black;
+            Canvas[] canvases = FindObjectsByType<Canvas>(FindObjectsSortMode.None).Where(c => c.enabled).ToArray();
+            foreach (Canvas c in canvases) c.enabled = false; // l'interface masquerait le plan
+            bool fog = RenderSettings.fog;
+            RenderSettings.fog = false; // la brume cacherait tout vu de si haut
+            yield return null;
+            yield return Capture(label);
+            RenderSettings.fog = fog;
+            foreach (Canvas c in canvases) c.enabled = true;
+            Destroy(go);
             yield return null;
         }
 
@@ -213,7 +296,7 @@ namespace ShadowBlade.Testing
         string DescribeState()
         {
             var sb = new StringBuilder();
-            sb.Append($"t={Time.time:0.0}s");
+            sb.Append($"t={Time.realtimeSinceStartup:0.0}s");
 
             Transform player = PlayerTransform();
             if (player != null)

@@ -18,6 +18,7 @@ namespace ShadowBlade.EditorTools
         public const string PrefabsFolder = "Assets/_Project/Prefabs";
         public const string MenuScenePath = "Assets/Scenes/MainMenu.unity";
         public const string ArenaScenePath = "Assets/Scenes/Arena.unity";
+        public const string DungeonScenePath = "Assets/Scenes/Dungeon.unity";
 
         public static readonly Color Gold = new Color(0.95f, 0.78f, 0.42f);
         public static readonly Color Crimson = new Color(0.62f, 0.14f, 0.1f, 0.95f);
@@ -48,7 +49,7 @@ namespace ShadowBlade.EditorTools
         public static void UpdateBuildScenes()
         {
             var scenes = new List<EditorBuildSettingsScene>();
-            foreach (string path in new[] { MenuScenePath, ArenaScenePath })
+            foreach (string path in new[] { MenuScenePath, ArenaScenePath, DungeonScenePath })
                 if (File.Exists(path)) scenes.Add(new EditorBuildSettingsScene(path, true));
             EditorBuildSettings.scenes = scenes.ToArray();
         }

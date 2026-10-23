@@ -13,6 +13,7 @@ namespace ShadowBlade.Core
     {
         public const string MenuScene = "MainMenu";
         public const string ArenaScene = "Arena";
+        public const string DungeonScene = "Dungeon";
 
         public static GameMode Mode { get; private set; } = GameMode.Survival;
         public static StageDefinition Stage { get; private set; }
@@ -36,7 +37,7 @@ namespace ShadowBlade.Core
         {
             Mode = GameMode.Story;
             Stage = stage;
-            Load(ArenaScene);
+            Load(DungeonScene);
         }
 
         public static void ReturnToMenu()

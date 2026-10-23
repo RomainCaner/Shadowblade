@@ -40,6 +40,7 @@ namespace ShadowBlade.EditorTools
         static void BuildAll()
         {
             ArenaBuilder.BuildScene();
+            ArenaBuilder.BuildDungeonScene();
             BuildScene(); // le menu en dernier : c'est la scène qui reste ouverte
         }
 
