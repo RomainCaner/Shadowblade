@@ -1,4 +1,5 @@
 using System;
+using ShadowBlade.Combat;
 using UnityEngine;
 
 namespace ShadowBlade.Player
@@ -29,6 +30,13 @@ namespace ShadowBlade.Player
         public float DodgeCooldown01 => dodgeCooldown > 0f ? Mathf.Clamp01(cooldownTimer / dodgeCooldown) : 0f;
         /// <summary>Vitesse horizontale normalisée (0 à 1), pour piloter un Animator plus tard.</summary>
         public float Speed01 { get; private set; }
+        /// <summary>Direction voulue par le joueur (joystick), relative à la caméra.</summary>
+        public Vector3 MoveDirection => GetCameraRelativeDirection(input.Move);
+
+        /// <summary>Bloque la marche (ex : pendant une attaque). La roulade reste possible.</summary>
+        public bool MovementLocked { get; set; }
+        /// <summary>Vitesse imposée pendant que la marche est bloquée (ex : avancée d'un coup d'épée).</summary>
+        public Vector3 ExternalVelocity { get; set; }
 
         public event Action DodgeStarted;
         public event Action DodgeEnded;
@@ -47,6 +55,7 @@ namespace ShadowBlade.Player
             controller = GetComponent<CharacterController>();
             input = GetComponent<PlayerInputReader>();
             if (Camera.main != null) cameraTransform = Camera.main.transform;
+            if (TryGetComponent(out Health health)) health.InvulnerabilityCheck = () => IsInvulnerable;
         }
 
         void OnEnable() => input.DodgePressed += TryDodge;
@@ -57,7 +66,20 @@ namespace ShadowBlade.Player
             float dt = Time.deltaTime;
             cooldownTimer = Mathf.Max(0f, cooldownTimer - dt);
 
-            Vector3 horizontalVelocity = IsDodging ? UpdateDodge(dt) : UpdateWalk(dt);
+            Vector3 horizontalVelocity;
+            if (IsDodging)
+            {
+                horizontalVelocity = UpdateDodge(dt);
+            }
+            else if (MovementLocked)
+            {
+                Speed01 = 0f;
+                horizontalVelocity = ExternalVelocity;
+            }
+            else
+            {
+                horizontalVelocity = UpdateWalk(dt);
+            }
 
             if (controller.isGrounded && verticalVelocity < 0f)
                 verticalVelocity = -2f;
@@ -117,6 +139,14 @@ namespace ShadowBlade.Player
             cooldownTimer = dodgeCooldown;
             if (visual != null) visual.localRotation = Quaternion.identity;
             DodgeEnded?.Invoke();
+        }
+
+        /// <summary>Tourne immédiatement le héros vers une direction (à plat).</summary>
+        public void FaceDirection(Vector3 direction)
+        {
+            direction.y = 0f;
+            if (direction.sqrMagnitude > 0.0001f)
+                transform.rotation = Quaternion.LookRotation(direction.normalized);
         }
 
         Vector3 GetCameraRelativeDirection(Vector2 stick)
