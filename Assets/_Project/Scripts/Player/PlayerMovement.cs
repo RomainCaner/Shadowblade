@@ -23,6 +23,8 @@ namespace ShadowBlade.Player
         [SerializeField] float dodgeCooldown = 0.6f;
         [Tooltip("Modèle visuel qui tourne sur lui-même pendant la roulade (optionnel).")]
         [SerializeField] Transform visual;
+        [Tooltip("Fait tourner le visuel pendant la roulade. À désactiver si le modèle a sa propre animation de roulade.")]
+        [SerializeField] bool proceduralRoll = true;
 
         public bool IsDodging { get; private set; }
         public bool IsInvulnerable => IsDodging || SkillInvulnerable;
@@ -113,7 +115,7 @@ namespace ShadowBlade.Player
             // La moyenne vaut 1, donc la distance parcourue est exactement dodgeDistance.
             float speed = dodgeDistance / dodgeDuration * 2f * (1f - t);
 
-            if (visual != null)
+            if (visual != null && proceduralRoll)
                 visual.localRotation = Quaternion.Euler(360f * Mathf.SmoothStep(0f, 1f, t), 0f, 0f);
 
             if (t >= 1f) EndDodge();

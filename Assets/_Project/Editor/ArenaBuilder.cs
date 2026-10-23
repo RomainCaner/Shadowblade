@@ -45,6 +45,16 @@ namespace ShadowBlade.EditorTools
             public Material Body;
             public Material Eyes;
             public Material Telegraph;
+
+            // Modèle KayKit (si présent) : remplace la capsule.
+            public string ModelPath;
+            public float ModelHeight = 1.9f;
+            public Material ModelMaterial;
+            public RuntimeAnimatorController Controller;
+            public float SpawnDuration;
+            public float DeathDelay;
+            public float AttackImpact = 0.4f;
+            public float HeavyImpact = 0.7f;
         }
 
         [MenuItem("ShadowBlade/Construire l'arène de test", priority = 20)]
@@ -77,16 +87,25 @@ namespace ShadowBlade.EditorTools
                 new Vector2(0.25f, 0.5f), new Color(0.9f, 0.15f, 0.1f), new Color(0.3f, 0.05f, 0.1f), -0.3f, stretched: false);
 
             BuildLevel(ground, stone);
-            GameObject player = BuildPlayer(hero, steel, shockwave, fx);
+            KayKitCharacters.CharacterAssets kaykit = KayKitCharacters.Prepare();
+
+            GameObject player = BuildPlayer(hero, steel, shockwave, fx, kaykit);
             CinemachineImpulseSource impulse = BuildCamera(player.transform);
 
             EnemyAI enemyPrefab = BuildEnemyPrefab(new EnemySpec
             {
                 PrefabName = "Enemy",
-                DisplayName = "Goule",
+                DisplayName = "Squelette",
                 Body = CreateMaterial("Enemy", new Color(0.55f, 0.12f, 0.12f)),
                 Eyes = CreateMaterial("EnemyEyes", new Color(1f, 0.75f, 0.2f)),
                 Telegraph = telegraph,
+                ModelPath = kaykit != null ? KayKitCharacters.MinionPath : null,
+                ModelHeight = 1.8f,
+                ModelMaterial = kaykit?.SkeletonMaterial,
+                Controller = kaykit?.Minion,
+                SpawnDuration = 1.2f,
+                DeathDelay = 1.2f,
+                AttackImpact = 0.35f,
             });
             EnemyAI bossPrefab = BuildEnemyPrefab(new EnemySpec
             {
@@ -109,6 +128,14 @@ namespace ShadowBlade.EditorTools
                 Body = CreateMaterial("Boss", new Color(0.2f, 0.1f, 0.24f)),
                 Eyes = CreateMaterial("BossEyes", new Color(1f, 0.2f, 0.1f)),
                 Telegraph = telegraph,
+                ModelPath = kaykit != null ? KayKitCharacters.WarriorPath : null,
+                ModelHeight = 3.4f,
+                ModelMaterial = kaykit?.SkeletonMaterial,
+                Controller = kaykit?.Boss,
+                SpawnDuration = 1.5f,
+                DeathDelay = 1.6f,
+                AttackImpact = 0.4f,
+                HeavyImpact = 0.75f,
             });
 
             BuildHud(player, enemyPrefab, bossPrefab, impulse, hitSpark, deathBurst);
@@ -183,7 +210,8 @@ namespace ShadowBlade.EditorTools
 
         // ---------------------------------------------------------------- Héros
 
-        static GameObject BuildPlayer(Material hero, Material steel, Material shockwave, Material fx)
+        static GameObject BuildPlayer(Material hero, Material steel, Material shockwave, Material fx,
+            KayKitCharacters.CharacterAssets kaykit)
         {
             var player = new GameObject("Player") { tag = "Player" };
             player.transform.position = new Vector3(0f, 0.1f, 0f);
@@ -201,7 +229,31 @@ namespace ShadowBlade.EditorTools
             var flash = player.AddComponent<HitFlash>();
             Set(flash, "flashColor", new Color(1f, 0.2f, 0.2f));
 
-            Transform visual = BuildHeroVisual(player.transform, hero, steel, out Transform swordPivot);
+            Transform visual;
+            Transform swordPivot = null;
+            Transform tip;
+            if (kaykit != null)
+            {
+                // Chevalier KayKit animé : les animations remplacent les mouvements "dessinés" par le code.
+                visual = new GameObject("Visual").transform;
+                visual.SetParent(player.transform, false);
+                Animator animator = KayKitCharacters.InstantiateModel(KayKitCharacters.KnightPath, visual, player.transform,
+                    1.9f, kaykit.KnightMaterial, kaykit.Hero, KayKitCharacters.KnightHiddenParts);
+                tip = KayKitCharacters.CreateWeaponTip(animator.transform, "1H_Sword");
+
+                var characterAnimator = player.AddComponent<Animations.CharacterAnimator>();
+                Set(characterAnimator, "animator", animator);
+                Set(movement, "proceduralRoll", false);
+                Set(skills, "proceduralPoses", false);
+            }
+            else
+            {
+                visual = BuildHeroVisual(player.transform, hero, steel, out swordPivot);
+                // La lame mesure 1,4 m à partir de 0,25 m du pivot.
+                tip = new GameObject("SwordTip").transform;
+                tip.SetParent(swordPivot, false);
+                tip.localPosition = new Vector3(0f, 0f, 1.6f);
+            }
 
             Set(movement, "visual", visual);
             Set(combat, "swordPivot", swordPivot);
@@ -209,10 +261,14 @@ namespace ShadowBlade.EditorTools
             Set(skills, "swordPivot", swordPivot);
             Set(skills, "effectMaterial", shockwave);
 
-            // Traînée lumineuse au bout de l'épée (la lame mesure 1,4 m à partir de 0,25 m du pivot).
-            var tip = new GameObject("SwordTip").transform;
-            tip.SetParent(swordPivot, false);
-            tip.localPosition = new Vector3(0f, 0f, 1.6f);
+            var feedback = player.AddComponent<PlayerFeedback>();
+            if (tip != null) Set(feedback, "swordTrail", CreateSwordTrail(tip, fx));
+            return player;
+        }
+
+        /// <summary>Traînée lumineuse au bout de l'épée.</summary>
+        static TrailRenderer CreateSwordTrail(Transform tip, Material fx)
+        {
             var trail = tip.gameObject.AddComponent<TrailRenderer>();
             trail.sharedMaterial = fx;
             trail.time = 0.14f;
@@ -225,10 +281,7 @@ namespace ShadowBlade.EditorTools
             trail.colorGradient = trailColors;
             trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             trail.emitting = false;
-
-            var feedback = player.AddComponent<PlayerFeedback>();
-            Set(feedback, "swordTrail", trail);
-            return player;
+            return trail;
         }
 
         static CinemachineImpulseSource BuildCamera(Transform target)
@@ -297,6 +350,42 @@ namespace ShadowBlade.EditorTools
 
             var visual = new GameObject("Visual").transform;
             visual.SetParent(root.transform, false);
+
+            if (spec.ModelPath != null)
+            {
+                Animator animator = KayKitCharacters.InstantiateModel(spec.ModelPath, visual, root.transform,
+                    spec.ModelHeight, spec.ModelMaterial, spec.Controller);
+                var enemyAnimator = root.AddComponent<Animations.EnemyAnimator>();
+                Set(enemyAnimator, "animator", animator);
+                Set(enemyAnimator, "attackImpactTime", spec.AttackImpact);
+                Set(enemyAnimator, "heavyImpactTime", spec.HeavyImpact);
+                Set(enemyAnimator, "playHitReactions", !spec.SuperArmor);
+                Set(ai, "spawnDuration", spec.SpawnDuration);
+                Set(ai, "deathDelay", spec.DeathDelay);
+            }
+            else
+            {
+                BuildCapsuleEnemy(visual, spec);
+            }
+
+            // Cercle d'avertissement au sol, affiché juste avant que l'ennemi frappe.
+            GameObject telegraph = CreateVisualPrimitive(PrimitiveType.Cylinder, "Telegraph", root.transform, spec.Telegraph);
+            telegraph.transform.localPosition = new Vector3(0f, 0.03f, 0f);
+            telegraph.transform.localScale = new Vector3(spec.AttackRange * 2f, 0.01f, spec.AttackRange * 2f);
+            Set(ai, "telegraph", telegraph.transform);
+
+            if (spec.WorldHealthBar) BuildEnemyHealthBar(root.transform, 2f * s + 0.5f);
+
+            string path = $"{PrefabsFolder}/{spec.PrefabName}.prefab";
+            GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, path);
+            Object.DestroyImmediate(root);
+            return prefab.GetComponent<EnemyAI>();
+        }
+
+        /// <summary>Ennemi provisoire en capsule (si les modèles KayKit sont absents).</summary>
+        static void BuildCapsuleEnemy(Transform visual, EnemySpec spec)
+        {
+            float s = spec.Scale;
             visual.localPosition = new Vector3(0f, s, 0f);
             visual.localScale = Vector3.one * s;
 
@@ -317,19 +406,6 @@ namespace ShadowBlade.EditorTools
                     horn.transform.localScale = new Vector3(0.1f, 0.4f, 0.1f);
                 }
             }
-
-            // Cercle d'avertissement au sol, affiché juste avant que l'ennemi frappe.
-            GameObject telegraph = CreateVisualPrimitive(PrimitiveType.Cylinder, "Telegraph", root.transform, spec.Telegraph);
-            telegraph.transform.localPosition = new Vector3(0f, 0.03f, 0f);
-            telegraph.transform.localScale = new Vector3(spec.AttackRange * 2f, 0.01f, spec.AttackRange * 2f);
-            Set(ai, "telegraph", telegraph.transform);
-
-            if (spec.WorldHealthBar) BuildEnemyHealthBar(root.transform, 2f * s + 0.5f);
-
-            string path = $"{PrefabsFolder}/{spec.PrefabName}.prefab";
-            GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, path);
-            Object.DestroyImmediate(root);
-            return prefab.GetComponent<EnemyAI>();
         }
 
         static void BuildEnemyHealthBar(Transform parent, float height)

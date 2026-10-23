@@ -4,14 +4,16 @@ using UnityEngine;
 namespace ShadowBlade.Combat
 {
     /// <summary>
-    /// Fait clignoter les modèles quand le personnage prend des dégâts.
+    /// Fait briller les modèles quand le personnage prend des dégâts.
+    /// Utilise l'émission du matériau : il faut que l'émission soit activée sur le matériau (URP Lit).
     /// </summary>
     [RequireComponent(typeof(Health))]
     public class HitFlash : MonoBehaviour
     {
-        static readonly int BaseColor = Shader.PropertyToID("_BaseColor");
+        static readonly int EmissionColor = Shader.PropertyToID("_EmissionColor");
 
-        [SerializeField] Color flashColor = Color.white;
+        [ColorUsage(false, true)]
+        [SerializeField] Color flashColor = new Color(1.5f, 1.5f, 1.5f);
         [SerializeField] float duration = 0.1f;
 
         Renderer[] renderers;
@@ -23,7 +25,7 @@ namespace ShadowBlade.Combat
         {
             renderers = GetComponentsInChildren<Renderer>();
             flashBlock = new MaterialPropertyBlock();
-            flashBlock.SetColor(BaseColor, flashColor);
+            flashBlock.SetColor(EmissionColor, flashColor);
             emptyBlock = new MaterialPropertyBlock();
             GetComponent<Health>().Damaged += (_, _) => Flash();
         }

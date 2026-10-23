@@ -57,6 +57,9 @@ namespace ShadowBlade.Player
         [SerializeField] Transform swordPivot;
         [Tooltip("Matériau de l'onde de choc de la Frappe sismique.")]
         [SerializeField] Material effectMaterial;
+        [Tooltip("Penche / fait tourner le visuel pendant la Charge et le Tourbillon. " +
+                 "À désactiver si le modèle a ses propres animations.")]
+        [SerializeField] bool proceduralPoses = true;
 
         public bool IsCasting { get; private set; }
         public int SkillCount => skills.Length;
@@ -164,7 +167,7 @@ namespace ShadowBlade.Player
             movement.FaceDirection(AimDirection(chargeDistance + 2f));
             movement.SkillInvulnerable = true;
             hitSet.Clear();
-            if (visual != null) visual.localRotation = Quaternion.Euler(20f, 0f, 0f); // penché en avant
+            if (visual != null && proceduralPoses) visual.localRotation = Quaternion.Euler(20f, 0f, 0f); // penché en avant
 
             float speed = chargeDistance / chargeDuration;
             for (float t = 0f; t < chargeDuration; t += Time.deltaTime)
@@ -191,7 +194,7 @@ namespace ShadowBlade.Player
             for (float t = 0f; t < whirlwindDuration; t += Time.deltaTime)
             {
                 movement.ExternalVelocity = movement.MoveDirection * whirlwindMoveSpeed;
-                if (visual != null) visual.localRotation = Quaternion.Euler(0f, t * 1080f, 0f);
+                if (visual != null && proceduralPoses) visual.localRotation = Quaternion.Euler(0f, t * 1080f, 0f);
 
                 tick -= Time.deltaTime;
                 if (tick <= 0f)

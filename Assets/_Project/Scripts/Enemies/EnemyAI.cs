@@ -34,6 +34,12 @@ namespace ShadowBlade.Enemies
         [SerializeField] float heavyDamage = 25f;
         [SerializeField] float heavyWindup = 1.2f;
 
+        [Header("Apparition et mort")]
+        [Tooltip("Temps pendant lequel l'ennemi sort de terre avant d'attaquer (0 = immédiat).")]
+        [SerializeField] float spawnDuration;
+        [Tooltip("Temps laissé à l'animation de mort avant que le corps disparaisse.")]
+        [SerializeField] float deathDelay;
+
         [Header("Réaction aux coups")]
         [Tooltip("Les coups n'interrompent pas l'ennemi et ne le font pas reculer (boss).")]
         [SerializeField] bool superArmor;
@@ -43,10 +49,13 @@ namespace ShadowBlade.Enemies
         public string DisplayName => displayName;
         public int GoldReward => goldReward;
         public Health Health => health;
+        public bool IsWindingUp => state == State.Windup;
 
         public event Action<EnemyAI> Died;
+        /// <summary>Début d'une attaque : durée de l'avertissement et attaque lourde ou non.</summary>
+        public event Action<float, bool> AttackWindupStarted;
 
-        enum State { Chase, Windup, Recover, Stagger, Dead }
+        enum State { Spawn, Chase, Windup, Recover, Stagger, Dead }
 
         NavMeshAgent agent;
         Health health;
@@ -77,6 +86,13 @@ namespace ShadowBlade.Enemies
         {
             GameObject player = GameObject.FindGameObjectWithTag("Player");
             if (player != null) target = player.GetComponent<Health>();
+
+            if (spawnDuration > 0f)
+            {
+                state = State.Spawn;
+                stateTimer = spawnDuration;
+                if (agent.isOnNavMesh) StopAgent();
+            }
         }
 
         void Update()
@@ -112,6 +128,7 @@ namespace ShadowBlade.Enemies
                         stateTimer = windupTotal;
                         StopAgent();
                         ShowTelegraph(true);
+                        AttackWindupStarted?.Invoke(windupTotal, heavyAttack);
                     }
                     break;
 
@@ -144,6 +161,7 @@ namespace ShadowBlade.Enemies
                     }
                     break;
 
+                case State.Spawn:
                 case State.Recover:
                 case State.Stagger:
                     if (stateTimer <= 0f) state = State.Chase;
@@ -180,6 +198,7 @@ namespace ShadowBlade.Enemies
 
         IEnumerator DeathRoutine()
         {
+            if (deathDelay > 0f) yield return new WaitForSeconds(deathDelay);
             Vector3 startScale = transform.localScale;
             for (float t = 0f; t < 1f; t += Time.deltaTime / 0.4f)
             {

@@ -93,8 +93,18 @@ namespace ShadowBlade.EditorTools
             showcase.transform.position = heroPosition + Vector3.up * 0.2f;
             showcase.transform.rotation = Quaternion.Euler(0f, 200f, 0f);
             showcase.AddComponent<Rotator>();
-            BuildHeroVisual(showcase.transform, hero, steel, out Transform swordPivot);
-            swordPivot.localRotation = Quaternion.Euler(-60f, 30f, 0f); // épée levée
+            KayKitCharacters.CharacterAssets kaykit = KayKitCharacters.Prepare();
+            if (kaykit != null)
+            {
+                // Chevalier KayKit en position de garde (animation "Idle" du contrôleur du héros).
+                KayKitCharacters.InstantiateModel(KayKitCharacters.KnightPath, showcase.transform, showcase.transform,
+                    1.9f, kaykit.KnightMaterial, kaykit.Hero, KayKitCharacters.KnightHiddenParts);
+            }
+            else
+            {
+                BuildHeroVisual(showcase.transform, hero, steel, out Transform swordPivot);
+                swordPivot.localRotation = Quaternion.Euler(-60f, 30f, 0f); // épée levée
+            }
 
             Light sun = Object.FindFirstObjectByType<Light>();
             if (sun != null)
