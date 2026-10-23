@@ -46,11 +46,8 @@ namespace ShadowBlade.EditorTools
             public Material Eyes;
             public Material Telegraph;
 
-            // Modèle KayKit (si présent) : remplace la capsule.
-            public string ModelPath;
-            public float ModelHeight = 1.9f;
-            public Material ModelMaterial;
-            public RuntimeAnimatorController Controller;
+            // Modèle animé (si présent) : remplace la capsule.
+            public KayKitCharacters.CharacterModel Model;
             public float SpawnDuration;
             public float DeathDelay;
             public float AttackImpact = 0.4f;
@@ -105,17 +102,14 @@ namespace ShadowBlade.EditorTools
             EnemyAI enemyPrefab = BuildEnemyPrefab(new EnemySpec
             {
                 PrefabName = "Enemy",
-                DisplayName = "Squelette",
+                DisplayName = kaykit?.MinionName ?? "Squelette",
                 Body = CreateMaterial("Enemy", new Color(0.55f, 0.12f, 0.12f)),
                 Eyes = CreateMaterial("EnemyEyes", new Color(1f, 0.75f, 0.2f)),
                 Telegraph = telegraph,
-                ModelPath = kaykit != null ? KayKitCharacters.MinionPath : null,
-                ModelHeight = 1.8f,
-                ModelMaterial = kaykit?.SkeletonMaterial,
-                Controller = kaykit?.Minion,
-                SpawnDuration = 1.2f,
-                DeathDelay = 1.2f,
-                AttackImpact = 0.35f,
+                Model = kaykit?.Minion,
+                SpawnDuration = kaykit?.MinionSpawn ?? 0f,
+                DeathDelay = kaykit?.MinionDeathDelay ?? 0f,
+                AttackImpact = kaykit?.MinionImpact ?? 0.4f,
             });
             EnemyAI bossPrefab = BuildEnemyPrefab(new EnemySpec
             {
@@ -138,14 +132,11 @@ namespace ShadowBlade.EditorTools
                 Body = CreateMaterial("Boss", new Color(0.2f, 0.1f, 0.24f)),
                 Eyes = CreateMaterial("BossEyes", new Color(1f, 0.2f, 0.1f)),
                 Telegraph = telegraph,
-                ModelPath = kaykit != null ? KayKitCharacters.WarriorPath : null,
-                ModelHeight = 3.4f,
-                ModelMaterial = kaykit?.SkeletonMaterial,
-                Controller = kaykit?.Boss,
-                SpawnDuration = 1.5f,
-                DeathDelay = 1.6f,
-                AttackImpact = 0.4f,
-                HeavyImpact = 0.75f,
+                Model = kaykit?.Boss,
+                SpawnDuration = kaykit?.BossSpawn ?? 0f,
+                DeathDelay = kaykit?.BossDeathDelay ?? 0f,
+                AttackImpact = kaykit?.BossImpact ?? 0.4f,
+                HeavyImpact = kaykit?.BossHeavyImpact ?? 0.7f,
             });
 
             GameControllerBase game;
@@ -354,17 +345,16 @@ namespace ShadowBlade.EditorTools
             Transform tip;
             if (kaykit != null)
             {
-                // Chevalier KayKit animé : les animations remplacent les mouvements "dessinés" par le code.
+                // Héros animé : les animations remplacent les mouvements "dessinés" par le code.
                 visual = new GameObject("Visual").transform;
                 visual.SetParent(player.transform, false);
-                Animator animator = KayKitCharacters.InstantiateModel(KayKitCharacters.KnightPath, visual, player.transform,
-                    1.9f, kaykit.KnightMaterial, kaykit.Hero, KayKitCharacters.KnightHiddenParts);
-                tip = KayKitCharacters.CreateWeaponTip(animator.transform, "1H_Sword");
+                Animator animator = KayKitCharacters.InstantiateModel(kaykit.Hero, visual, player.transform);
+                tip = KayKitCharacters.CreateWeaponTip(animator.transform, kaykit.HeroWeaponTip);
 
                 var characterAnimator = player.AddComponent<Animations.CharacterAnimator>();
                 Set(characterAnimator, "animator", animator);
                 Set(movement, "proceduralRoll", false);
-                Set(skills, "proceduralPoses", false);
+                Set(skills, "proceduralPoses", kaykit.HeroProceduralPoses);
             }
             else
             {
@@ -471,10 +461,9 @@ namespace ShadowBlade.EditorTools
             var visual = new GameObject("Visual").transform;
             visual.SetParent(root.transform, false);
 
-            if (spec.ModelPath != null)
+            if (spec.Model != null)
             {
-                Animator animator = KayKitCharacters.InstantiateModel(spec.ModelPath, visual, root.transform,
-                    spec.ModelHeight, spec.ModelMaterial, spec.Controller);
+                Animator animator = KayKitCharacters.InstantiateModel(spec.Model, visual, root.transform);
                 var enemyAnimator = root.AddComponent<Animations.EnemyAnimator>();
                 Set(enemyAnimator, "animator", animator);
                 Set(enemyAnimator, "attackImpactTime", spec.AttackImpact);

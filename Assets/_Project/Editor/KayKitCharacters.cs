@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
@@ -8,9 +9,10 @@ using UnityEngine;
 namespace ShadowBlade.EditorTools
 {
     /// <summary>
-    /// Prépare les personnages KayKit (CC0, Kay Lousberg) : réglages d'import, matériaux,
-    /// contrôleurs d'animation, et pose des modèles à la bonne taille dans les scènes.
-    /// Les FBX contiennent déjà toutes les animations (rig "Generic").
+    /// Prépare les personnages animés : réglages d'import, matériaux, contrôleurs d'animation,
+    /// et pose des modèles à la bonne taille dans les scènes.
+    /// Deux packs CC0 sont gérés : Quaternius "RPG Characters" (utilisé en priorité, proportions adultes)
+    /// et KayKit (style plus "chibi", gardé en secours). Les FBX contiennent leurs animations (rig "Generic").
     /// </summary>
     public static class KayKitCharacters
     {
@@ -20,10 +22,16 @@ namespace ShadowBlade.EditorTools
         public const string WarriorPath = Root + "/Skeletons/Skeleton_Warrior.fbx";
         const string KnightTexture = Root + "/Adventurers/knight_texture.png";
         const string SkeletonTexture = Root + "/Skeletons/skeleton_texture.png";
+
+        const string Quaternius = "Assets/_Project/Art/Quaternius/RPG";
+        const string QWarrior = Quaternius + "/Warrior.fbx";
+        const string QRogue = Quaternius + "/Rogue.fbx";
+        const string QCleric = Quaternius + "/Cleric.fbx";
+
         const string ControllersFolder = "Assets/_Project/Animation";
         const string ImportVersion = "ShadowBlade.v1";
 
-        /// <summary>Armes et boucliers du chevalier qu'on cache (on garde l'épée à une main et le bouclier rond).</summary>
+        /// <summary>Armes et boucliers du chevalier KayKit qu'on cache (on garde l'épée à une main et le bouclier rond).</summary>
         public static readonly string[] KnightHiddenParts =
             { "1H_Sword_Offhand", "2H_Sword", "Badge_Shield", "Rectangle_Shield", "Spike_Shield" };
 
@@ -31,40 +39,142 @@ namespace ShadowBlade.EditorTools
         {
             "Idle", "Idle_B", "Idle_Combat", "2H_Melee_Idle", "Running_A", "Running_B", "Running_C",
             "Walking_A", "Walking_B", "Walking_C", "Walking_D_Skeletons", "2H_Melee_Attack_Spinning",
+            "Idle_Weapon", "Run_Weapon", "Attacking_Idle", "Attack_Idle", "Idle_Attacking", "Run", "Walk",
         };
+
+        /// <summary>Un modèle animé et la façon de le poser.</summary>
+        public class CharacterModel
+        {
+            public string Path;
+            public RuntimeAnimatorController Controller;
+            /// <summary>Matériau unique pour tout le modèle ; si null, chaque matériau du FBX est remplacé
+            /// par un matériau utilisant la texture du même nom dans TextureFolder.</summary>
+            public Material Material;
+            public string TextureFolder;
+            public string[] Hidden = Array.Empty<string>();
+            public float Height = 1.9f;
+            /// <summary>Rotation du modèle si le FBX ne regarde pas vers +Z.</summary>
+            public float Yaw;
+        }
 
         public class CharacterAssets
         {
-            public RuntimeAnimatorController Hero;
-            public RuntimeAnimatorController Minion;
-            public RuntimeAnimatorController Boss;
-            public Material KnightMaterial;
-            public Material SkeletonMaterial;
+            public CharacterModel Hero;
+            public CharacterModel Minion;
+            public CharacterModel Boss;
+            /// <summary>Nom de l'os ou de l'objet au bout de l'épée du héros (pour la traînée).</summary>
+            public string HeroWeaponTip;
+            /// <summary>Faut-il "dessiner" par le code la rotation du Tourbillon (pas d'animation dédiée) ?</summary>
+            public bool HeroProceduralPoses;
+            public string MinionName = "Squelette";
+            public float MinionSpawn = 1.2f, MinionDeathDelay = 1.2f, MinionImpact = 0.35f;
+            public float BossSpawn = 1.5f, BossDeathDelay = 1.6f, BossImpact = 0.4f, BossHeavyImpact = 0.75f;
+        }
+
+        /// <summary>Clips d'animation du héros, dans l'ordre attendu par le contrôleur.</summary>
+        class HeroClips
+        {
+            public string Idle, Run, Dodge, Hit, Death;
+            public float RunScale = 1f;
+            public string[] Attacks;
+            public float[] AttackDurations = { 0.42f, 0.42f, 0.6f };
+            public string[] Skills;
+            /// <summary>Durée de chaque compétence (0 = vitesse normale, en boucle).</summary>
+            public float[] SkillDurations;
         }
 
         public static bool FilesPresent =>
             File.Exists(KnightPath) && File.Exists(MinionPath) && File.Exists(WarriorPath);
 
+        static bool QuaterniusPresent =>
+            File.Exists(QWarrior) && File.Exists(QRogue) && File.Exists(QCleric);
+
         /// <summary>
         /// Configure l'import des modèles et génère matériaux et contrôleurs.
-        /// Renvoie null si les fichiers KayKit sont absents (les scènes gardent alors les capsules).
+        /// Renvoie null si aucun pack n'est présent (les scènes gardent alors les capsules).
         /// </summary>
         public static CharacterAssets Prepare()
         {
-            if (!FilesPresent) return null;
+            BuilderUtility.EnsureFolder(ControllersFolder);
+            if (QuaterniusPresent) return PrepareQuaternius();
+            if (FilesPresent) return PrepareKayKit();
+            return null;
+        }
+
+        static CharacterAssets PrepareQuaternius()
+        {
+            foreach (string path in new[] { QWarrior, QRogue, QCleric })
+                if (!ConfigureImport(path)) return null;
+
+            return new CharacterAssets
+            {
+                Hero = new CharacterModel
+                {
+                    Path = QWarrior, TextureFolder = Quaternius, Height = 1.85f,
+                    Controller = CreateHeroController("Hero", QWarrior, new HeroClips
+                    {
+                        Idle = "Idle_Weapon", Run = "Run_Weapon", Dodge = "Roll", Hit = "RecieveHit", Death = "Death",
+                        Attacks = new[] { "Sword_AttackFast", "Sword_AttackFast", "Sword_Attack" },
+                        Skills = new[] { "Sword_AttackFast", "Sword_Attack", "Sword_Attack" },
+                        SkillDurations = new[] { 0.45f, 0.55f, 0.75f },
+                    }),
+                },
+                HeroWeaponTip = "Weapon.R_end",
+                HeroProceduralPoses = true, // pas d'animation de rotation : le Tourbillon fait tourner le modèle
+                Minion = new CharacterModel
+                {
+                    Path = QRogue, TextureFolder = Quaternius, Height = 1.75f,
+                    Controller = CreateEnemyController("Assassin", QRogue, idle: "Attacking_Idle", run: "Run", runScale: 1f,
+                        attack: "Dagger_Attack", heavy: "Dagger_Attack2", hit: "RecieveHit", death: "Death", spawn: null),
+                },
+                MinionName = "Assassin",
+                MinionSpawn = 0.6f, MinionDeathDelay = 1.3f, MinionImpact = 0.35f,
+                Boss = new CharacterModel
+                {
+                    Path = QCleric, TextureFolder = Quaternius, Height = 3.2f,
+                    Controller = CreateEnemyController("Boss", QCleric, idle: "Attack_Idle", run: "Walk", runScale: 1.3f,
+                        attack: "Staff_Attack", heavy: "Spell1", hit: "RecieveHit", death: "Death", spawn: null),
+                },
+                BossSpawn = 0.8f, BossDeathDelay = 1.8f, BossImpact = 0.45f, BossHeavyImpact = 0.8f,
+            };
+        }
+
+        static CharacterAssets PrepareKayKit()
+        {
             foreach (string path in new[] { KnightPath, MinionPath, WarriorPath })
                 if (!ConfigureImport(path)) return null;
 
-            BuilderUtility.EnsureFolder(ControllersFolder);
+            Material skeleton = CreateTexturedMaterial("KayKit_Skeleton", SkeletonTexture);
             return new CharacterAssets
             {
-                KnightMaterial = CreateTexturedMaterial("KayKit_Knight", KnightTexture),
-                SkeletonMaterial = CreateTexturedMaterial("KayKit_Skeleton", SkeletonTexture),
-                Hero = CreateHeroController(),
-                Minion = CreateEnemyController("Skeleton_Minion", MinionPath, idle: "Idle_Combat", run: "Running_A", runScale: 1.1f,
-                    attack: "Unarmed_Melee_Attack_Punch_A", heavy: "Unarmed_Melee_Attack_Punch_B", spawn: "Spawn_Ground_Skeletons"),
-                Boss = CreateEnemyController("Skeleton_Warrior", WarriorPath, idle: "Idle_Combat", run: "Walking_D_Skeletons", runScale: 1.4f,
-                    attack: "Unarmed_Melee_Attack_Punch_B", heavy: "1H_Melee_Attack_Jump_Chop", spawn: "Skeletons_Awaken_Standing"),
+                Hero = new CharacterModel
+                {
+                    Path = KnightPath, Material = CreateTexturedMaterial("KayKit_Knight", KnightTexture),
+                    Hidden = KnightHiddenParts, Height = 1.9f,
+                    Controller = CreateHeroController("Hero", KnightPath, new HeroClips
+                    {
+                        Idle = "Idle", Run = "Running_A", RunScale = 1.15f, Dodge = "Dodge_Forward", Hit = "Hit_A", Death = "Death_A",
+                        Attacks = new[] { "1H_Melee_Attack_Slice_Diagonal", "1H_Melee_Attack_Slice_Horizontal", "2H_Melee_Attack_Spin" },
+                        Skills = new[] { "1H_Melee_Attack_Stab", "2H_Melee_Attack_Spinning", "2H_Melee_Attack_Chop" },
+                        SkillDurations = new[] { 0.45f, 0f, 0.75f },
+                    }),
+                },
+                HeroWeaponTip = "1H_Sword",
+                HeroProceduralPoses = false,
+                Minion = new CharacterModel
+                {
+                    Path = MinionPath, Material = skeleton, Height = 1.8f,
+                    Controller = CreateEnemyController("Skeleton_Minion", MinionPath, idle: "Idle_Combat", run: "Running_A", runScale: 1.1f,
+                        attack: "Unarmed_Melee_Attack_Punch_A", heavy: "Unarmed_Melee_Attack_Punch_B", hit: "Hit_A",
+                        death: "Death_C_Skeletons", spawn: "Spawn_Ground_Skeletons"),
+                },
+                Boss = new CharacterModel
+                {
+                    Path = WarriorPath, Material = skeleton, Height = 3.4f,
+                    Controller = CreateEnemyController("Skeleton_Warrior", WarriorPath, idle: "Idle_Combat", run: "Walking_D_Skeletons", runScale: 1.4f,
+                        attack: "Unarmed_Melee_Attack_Punch_B", heavy: "1H_Melee_Attack_Jump_Chop", hit: "Hit_A",
+                        death: "Death_C_Skeletons", spawn: "Skeletons_Awaken_Standing"),
+                },
             };
         }
 
@@ -75,7 +185,7 @@ namespace ShadowBlade.EditorTools
             var importer = AssetImporter.GetAtPath(path) as ModelImporter;
             if (importer == null)
             {
-                Debug.LogError($"KayKit : {path} n'est pas encore importé par Unity. Clique dans Unity, attends la fin de l'import, puis relance.");
+                Debug.LogError($"Personnages : {path} n'est pas encore importé par Unity. Clique dans Unity, attends la fin de l'import, puis relance.");
                 return false;
             }
             if (importer.userData == ImportVersion) return true;
@@ -93,7 +203,7 @@ namespace ShadowBlade.EditorTools
             importer.clipAnimations = clips;
             importer.userData = ImportVersion;
             importer.SaveAndReimport();
-            Debug.Log($"KayKit : import configuré pour {path} ({clips.Length} animations)");
+            Debug.Log($"Personnages : import configuré pour {path} ({clips.Length} animations)");
             return true;
         }
 
@@ -103,9 +213,10 @@ namespace ShadowBlade.EditorTools
 
         static AnimationClip Clip(string path, string name)
         {
+            if (string.IsNullOrEmpty(name)) return null;
             AnimationClip clip = AssetDatabase.LoadAllAssetsAtPath(path).OfType<AnimationClip>()
                 .FirstOrDefault(c => !c.name.StartsWith("__preview__", StringComparison.Ordinal) && Matches(c.name, name));
-            if (clip == null) Debug.LogError($"KayKit : animation \"{name}\" introuvable dans {path}");
+            if (clip == null) Debug.LogError($"Personnages : animation \"{name}\" introuvable dans {path}");
             return clip;
         }
 
@@ -124,10 +235,9 @@ namespace ShadowBlade.EditorTools
 
         // ---------------------------------------------------------------- Contrôleurs
 
-        static AnimatorController CreateHeroController()
+        static AnimatorController CreateHeroController(string name, string p, HeroClips clips)
         {
-            string p = KnightPath;
-            AnimatorController controller = NewController("Hero");
+            AnimatorController controller = NewController(name);
             AddParameters(controller, ("Speed", AnimatorControllerParameterType.Float),
                 ("Attack", AnimatorControllerParameterType.Trigger), ("ComboIndex", AnimatorControllerParameterType.Int),
                 ("Dodge", AnimatorControllerParameterType.Trigger), ("Skill", AnimatorControllerParameterType.Trigger),
@@ -135,32 +245,28 @@ namespace ShadowBlade.EditorTools
                 ("Hit", AnimatorControllerParameterType.Trigger), ("Dead", AnimatorControllerParameterType.Bool));
 
             AnimatorStateMachine sm = controller.layers[0].stateMachine;
-            AnimatorState locomotion = AddLocomotion(controller, Clip(p, "Idle"), Clip(p, "Running_A"), 1.15f);
+            AnimatorState locomotion = AddLocomotion(controller, Clip(p, clips.Idle), Clip(p, clips.Run), clips.RunScale);
 
             // Combo : durées proches de celles de PlayerCombat pour que l'animation colle au coup.
-            string[] attacks = { "1H_Melee_Attack_Slice_Diagonal", "1H_Melee_Attack_Slice_Horizontal", "2H_Melee_Attack_Spin" };
-            float[] attackDurations = { 0.42f, 0.42f, 0.6f };
-            for (int i = 0; i < attacks.Length; i++)
+            for (int i = 0; i < clips.Attacks.Length; i++)
             {
-                AnimatorState state = AddTimedState(sm, "Attack" + (i + 1), Clip(p, attacks[i]), attackDurations[i]);
+                AnimatorState state = AddTimedState(sm, "Attack" + (i + 1), Clip(p, clips.Attacks[i]), clips.AttackDurations[i]);
                 AnimatorStateTransition enter = AnyState(sm, state, 0.05f);
                 enter.AddCondition(AnimatorConditionMode.If, 0f, "Attack");
                 enter.AddCondition(AnimatorConditionMode.Equals, i, "ComboIndex");
                 ExitWithTime(state, locomotion);
             }
 
-            AnimatorState dodge = AddTimedState(sm, "Dodge", Clip(p, "Dodge_Forward"), 0.4f);
+            AnimatorState dodge = AddTimedState(sm, "Dodge", Clip(p, clips.Dodge), 0.4f);
             AnyState(sm, dodge, 0.03f).AddCondition(AnimatorConditionMode.If, 0f, "Dodge");
             ExitWithTime(dodge, locomotion);
 
             // Compétences : l'animation reste tant que la compétence est en cours (Casting).
-            string[] skills = { "1H_Melee_Attack_Stab", "2H_Melee_Attack_Spinning", "2H_Melee_Attack_Chop" };
-            float[] skillDurations = { 0.45f, 0f, 0.75f }; // 0 = vitesse normale, en boucle
-            for (int i = 0; i < skills.Length; i++)
+            for (int i = 0; i < clips.Skills.Length; i++)
             {
-                AnimatorState state = skillDurations[i] > 0f
-                    ? AddTimedState(sm, "Skill" + (i + 1), Clip(p, skills[i]), skillDurations[i])
-                    : AddState(sm, "Skill" + (i + 1), Clip(p, skills[i]), 1.3f);
+                AnimatorState state = clips.SkillDurations[i] > 0f
+                    ? AddTimedState(sm, "Skill" + (i + 1), Clip(p, clips.Skills[i]), clips.SkillDurations[i])
+                    : AddState(sm, "Skill" + (i + 1), Clip(p, clips.Skills[i]), 1.3f);
                 AnimatorStateTransition enter = AnyState(sm, state, 0.05f);
                 enter.AddCondition(AnimatorConditionMode.If, 0f, "Skill");
                 enter.AddCondition(AnimatorConditionMode.Equals, i, "SkillIndex");
@@ -170,16 +276,16 @@ namespace ShadowBlade.EditorTools
                 exit.AddCondition(AnimatorConditionMode.IfNot, 0f, "Casting");
             }
 
-            AnimatorState hit = AddTimedState(sm, "Hit", Clip(p, "Hit_A"), 0.4f);
+            AnimatorState hit = AddTimedState(sm, "Hit", Clip(p, clips.Hit), 0.4f);
             AnyState(sm, hit, 0.05f).AddCondition(AnimatorConditionMode.If, 0f, "Hit");
             ExitWithTime(hit, locomotion);
 
-            AddDeath(sm, Clip(p, "Death_A"));
+            AddDeath(sm, Clip(p, clips.Death));
             return controller;
         }
 
         static AnimatorController CreateEnemyController(string name, string p, string idle, string run, float runScale,
-            string attack, string heavy, string spawn)
+            string attack, string heavy, string hit, string death, string spawn)
         {
             AnimatorController controller = NewController(name);
             AddParameters(controller, ("Speed", AnimatorControllerParameterType.Float),
@@ -189,9 +295,12 @@ namespace ShadowBlade.EditorTools
             AnimatorStateMachine sm = controller.layers[0].stateMachine;
             AnimatorState locomotion = AddLocomotion(controller, Clip(p, idle), Clip(p, run), runScale);
 
-            AnimatorState spawnState = AddState(sm, "Spawn", Clip(p, spawn), 1f);
-            ExitWithTime(spawnState, locomotion, 0.95f);
-            sm.defaultState = spawnState;
+            if (!string.IsNullOrEmpty(spawn))
+            {
+                AnimatorState spawnState = AddState(sm, "Spawn", Clip(p, spawn), 1f);
+                ExitWithTime(spawnState, locomotion, 0.95f);
+                sm.defaultState = spawnState;
+            }
 
             AnimatorState attackState = AddState(sm, "Attack", Clip(p, attack), 1f);
             AnimatorStateTransition toAttack = AnyState(sm, attackState, 0.05f);
@@ -205,11 +314,11 @@ namespace ShadowBlade.EditorTools
             toHeavy.AddCondition(AnimatorConditionMode.If, 0f, "Heavy");
             ExitWithTime(heavyState, locomotion);
 
-            AnimatorState hit = AddTimedState(sm, "Hit", Clip(p, "Hit_A"), 0.35f);
-            AnyState(sm, hit, 0.05f).AddCondition(AnimatorConditionMode.If, 0f, "Hit");
-            ExitWithTime(hit, locomotion);
+            AnimatorState hitState = AddTimedState(sm, "Hit", Clip(p, hit), 0.35f);
+            AnyState(sm, hitState, 0.05f).AddCondition(AnimatorConditionMode.If, 0f, "Hit");
+            ExitWithTime(hitState, locomotion);
 
-            AddDeath(sm, Clip(p, "Death_C_Skeletons"));
+            AddDeath(sm, Clip(p, death));
             return controller;
         }
 
@@ -287,43 +396,60 @@ namespace ShadowBlade.EditorTools
         // ---------------------------------------------------------------- Modèles dans la scène
 
         /// <summary>
-        /// Place un modèle KayKit sous "parent", mis à l'échelle pour mesurer "targetHeight" mètres,
+        /// Place un modèle sous "parent", mis à l'échelle pour mesurer model.Height mètres,
         /// pieds posés à la hauteur de "ground".
         /// </summary>
-        public static Animator InstantiateModel(string fbxPath, Transform parent, Transform ground, float targetHeight,
-            Material material, RuntimeAnimatorController controller, params string[] hiddenParts)
+        public static Animator InstantiateModel(CharacterModel model, Transform parent, Transform ground)
         {
-            var asset = AssetDatabase.LoadAssetAtPath<GameObject>(fbxPath);
-            var model = (GameObject)PrefabUtility.InstantiatePrefab(asset, parent);
-            model.name = "Model";
-            model.transform.localPosition = Vector3.zero;
-            model.transform.localRotation = Quaternion.identity;
-            model.transform.localScale = Vector3.one;
+            var asset = AssetDatabase.LoadAssetAtPath<GameObject>(model.Path);
+            var go = (GameObject)PrefabUtility.InstantiatePrefab(asset, parent);
+            go.name = "Model";
+            go.transform.localPosition = Vector3.zero;
+            go.transform.localRotation = Quaternion.Euler(0f, model.Yaw, 0f);
+            go.transform.localScale = Vector3.one;
 
-            foreach (Transform part in model.GetComponentsInChildren<Transform>(true))
-                if (hiddenParts.Contains(part.name)) part.gameObject.SetActive(false);
+            foreach (Transform part in go.GetComponentsInChildren<Transform>(true))
+                if (model.Hidden.Contains(part.name)) part.gameObject.SetActive(false);
 
-            foreach (Renderer renderer in model.GetComponentsInChildren<Renderer>(true))
+            var cache = new Dictionary<string, Material>();
+            foreach (Renderer renderer in go.GetComponentsInChildren<Renderer>(true))
             {
-                var materials = new Material[renderer.sharedMaterials.Length];
-                for (int i = 0; i < materials.Length; i++) materials[i] = material;
+                Material[] materials = renderer.sharedMaterials;
+                for (int i = 0; i < materials.Length; i++)
+                    materials[i] = ResolveMaterial(model, materials[i], cache);
                 renderer.sharedMaterials = materials;
             }
 
-            Bounds bounds = CombinedBounds(model);
+            Bounds bounds = CombinedBounds(go);
             if (bounds.size.y > 0.001f)
             {
-                model.transform.localScale = Vector3.one * (targetHeight / bounds.size.y);
-                bounds = CombinedBounds(model);
-                model.transform.position += Vector3.up * (ground.position.y - bounds.min.y);
+                go.transform.localScale = Vector3.one * (model.Height / bounds.size.y);
+                bounds = CombinedBounds(go);
+                go.transform.position += Vector3.up * (ground.position.y - bounds.min.y);
             }
 
-            Animator animator = model.GetComponent<Animator>();
-            if (animator == null) animator = model.AddComponent<Animator>();
-            animator.runtimeAnimatorController = controller;
+            Animator animator = go.GetComponent<Animator>();
+            if (animator == null) animator = go.AddComponent<Animator>();
+            animator.runtimeAnimatorController = model.Controller;
             animator.applyRootMotion = false;
             animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
             return animator;
+        }
+
+        /// <summary>
+        /// Matériau final d'un emplacement : le matériau unique du modèle, ou sinon un matériau URP
+        /// (avec émission pour le flash des coups) utilisant la texture qui porte le nom du matériau d'origine.
+        /// </summary>
+        static Material ResolveMaterial(CharacterModel model, Material original, Dictionary<string, Material> cache)
+        {
+            if (model.Material != null) return model.Material;
+            if (original == null || string.IsNullOrEmpty(model.TextureFolder)) return original;
+            if (cache.TryGetValue(original.name, out Material cached)) return cached;
+
+            string texture = $"{model.TextureFolder}/{original.name}.png";
+            Material result = File.Exists(texture) ? CreateTexturedMaterial("Char_" + original.name, texture) : original;
+            cache[original.name] = result;
+            return result;
         }
 
         static Bounds CombinedBounds(GameObject model)
@@ -336,33 +462,34 @@ namespace ShadowBlade.EditorTools
         }
 
         /// <summary>
-        /// Point au bout de la lame d'une arme (pour la traînée lumineuse) :
-        /// l'extrémité de l'axe le plus long du mesh, du côté opposé à la poignée.
+        /// Point au bout de la lame (pour la traînée lumineuse). "tipName" peut être un os placé au bout
+        /// de l'arme (ex : "Weapon.R_end") ou un mesh d'arme dont on prend l'extrémité la plus éloignée de la poignée.
         /// </summary>
-        public static Transform CreateWeaponTip(Transform model, string weaponName)
+        public static Transform CreateWeaponTip(Transform model, string tipName)
         {
-            Transform weapon = model.GetComponentsInChildren<Transform>(true).FirstOrDefault(t => t.name == weaponName);
-            Mesh mesh = weapon == null ? null
-                : weapon.GetComponent<MeshFilter>() != null ? weapon.GetComponent<MeshFilter>().sharedMesh
-                : weapon.GetComponent<SkinnedMeshRenderer>() != null ? weapon.GetComponent<SkinnedMeshRenderer>().sharedMesh
-                : null;
-            if (mesh == null)
+            Transform target = model.GetComponentsInChildren<Transform>(true).FirstOrDefault(t => t.name == tipName);
+            if (target == null)
             {
-                Debug.LogWarning($"KayKit : arme \"{weaponName}\" introuvable, pas de traînée d'épée.");
+                Debug.LogWarning($"Personnages : \"{tipName}\" introuvable, pas de traînée d'épée.");
                 return null;
             }
 
+            Mesh mesh = target.GetComponent<MeshFilter>() != null ? target.GetComponent<MeshFilter>().sharedMesh
+                : target.GetComponent<SkinnedMeshRenderer>() != null ? target.GetComponent<SkinnedMeshRenderer>().sharedMesh
+                : null;
+
+            var tip = new GameObject("SwordTip").transform;
+            tip.SetParent(target, false);
+            if (mesh == null) return tip; // un os : on se place dessus
+
             Bounds b = mesh.bounds;
             int axis = b.size.x >= b.size.y && b.size.x >= b.size.z ? 0 : b.size.y >= b.size.z ? 1 : 2;
-            Vector3 tip = b.center;
+            Vector3 position = b.center;
             float positiveEnd = b.center[axis] + b.extents[axis];
             float negativeEnd = b.center[axis] - b.extents[axis];
-            tip[axis] = Mathf.Abs(positiveEnd) >= Mathf.Abs(negativeEnd) ? positiveEnd : negativeEnd;
-
-            var tipTransform = new GameObject("SwordTip").transform;
-            tipTransform.SetParent(weapon, false);
-            tipTransform.localPosition = tip;
-            return tipTransform;
+            position[axis] = Mathf.Abs(positiveEnd) >= Mathf.Abs(negativeEnd) ? positiveEnd : negativeEnd;
+            tip.localPosition = position;
+            return tip;
         }
     }
 }

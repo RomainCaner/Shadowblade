@@ -97,9 +97,8 @@ namespace ShadowBlade.EditorTools
             KayKitCharacters.CharacterAssets kaykit = KayKitCharacters.Prepare();
             if (kaykit != null)
             {
-                // Chevalier KayKit en position de garde (animation "Idle" du contrôleur du héros).
-                KayKitCharacters.InstantiateModel(KayKitCharacters.KnightPath, showcase.transform, showcase.transform,
-                    1.9f, kaykit.KnightMaterial, kaykit.Hero, KayKitCharacters.KnightHiddenParts);
+                // Héros en position de garde (animation "Idle" du contrôleur du héros).
+                KayKitCharacters.InstantiateModel(kaykit.Hero, showcase.transform, showcase.transform);
             }
             else
             {

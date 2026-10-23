@@ -13,7 +13,7 @@ namespace ShadowBlade.Combat
         static readonly int EmissionColor = Shader.PropertyToID("_EmissionColor");
 
         [ColorUsage(false, true)]
-        [SerializeField] Color flashColor = new Color(1.5f, 1.5f, 1.5f);
+        [SerializeField] Color flashColor = new Color(0.6f, 0.6f, 0.6f);
         [SerializeField] float duration = 0.1f;
 
         Renderer[] renderers;

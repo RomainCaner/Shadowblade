@@ -141,6 +141,7 @@ MonoBehaviour:
   superArmor: 0
   staggerDuration: 0.35
   knockbackDistance: 0.8
+  staggerImmunity: 1.5
 --- !u!114 &7752694675389447982
 MonoBehaviour:
   m_ObjectHideFlags: 0
