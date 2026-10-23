@@ -25,6 +25,13 @@ namespace ShadowBlade.UI
             if (hideWhenFull) group = gameObject.AddComponent<CanvasGroup>();
         }
 
+        /// <summary>Change le personnage suivi (ex : barre du boss dans le HUD).</summary>
+        public void SetTarget(Health target)
+        {
+            health = target;
+            shown = target != null ? target.Normalized : 1f;
+        }
+
         void LateUpdate()
         {
             if (health == null || fill == null) return;

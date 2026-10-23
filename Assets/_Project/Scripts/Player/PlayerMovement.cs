@@ -25,7 +25,9 @@ namespace ShadowBlade.Player
         [SerializeField] Transform visual;
 
         public bool IsDodging { get; private set; }
-        public bool IsInvulnerable => IsDodging;
+        public bool IsInvulnerable => IsDodging || SkillInvulnerable;
+        /// <summary>Invincibilité accordée par une compétence (ex : pendant la Charge).</summary>
+        public bool SkillInvulnerable { get; set; }
         /// <summary>0 = esquive disponible, 1 = vient d'être utilisée. Pratique pour l'UI.</summary>
         public float DodgeCooldown01 => dodgeCooldown > 0f ? Mathf.Clamp01(cooldownTimer / dodgeCooldown) : 0f;
         /// <summary>Vitesse horizontale normalisée (0 à 1), pour piloter un Animator plus tard.</summary>

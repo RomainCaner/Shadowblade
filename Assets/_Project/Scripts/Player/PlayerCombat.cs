@@ -1,6 +1,5 @@
 using System;
 using System.Collections;
-using System.Collections.Generic;
 using ShadowBlade.Combat;
 using UnityEngine;
 
@@ -30,6 +29,8 @@ namespace ShadowBlade.Player
             public float swingTo = 80f;
         }
 
+        const float HitStopTimeScale = 0.05f;
+
         [SerializeField] ComboStep[] combo =
         {
             new ComboStep { damage = 10f, swingFrom = -80f, swingTo = 80f },
@@ -45,7 +46,6 @@ namespace ShadowBlade.Player
         [SerializeField, Range(0f, 1f)] float bufferWindow = 0.25f;
         [Tooltip("Rayon dans lequel le héros se tourne automatiquement vers l'ennemi le plus proche.")]
         [SerializeField] float autoAimRadius = 5f;
-        [SerializeField] LayerMask hitMask = ~0;
         [Tooltip("Courte pause du jeu à l'impact pour donner du poids aux coups.")]
         [SerializeField] float hitStopDuration = 0.06f;
         [SerializeField] Transform swordPivot;
@@ -59,6 +59,7 @@ namespace ShadowBlade.Player
 
         PlayerMovement movement;
         PlayerInputReader input;
+        PlayerSkills skills;
         Health health;
 
         ComboStep current;
@@ -67,37 +68,52 @@ namespace ShadowBlade.Player
         bool nextQueued;
         bool hitStopRunning;
 
-        readonly Collider[] overlapBuffer = new Collider[32];
-        readonly HashSet<Health> hitThisSwing = new HashSet<Health>();
-
         void Awake()
         {
             movement = GetComponent<PlayerMovement>();
             input = GetComponent<PlayerInputReader>();
             health = GetComponent<Health>();
+            skills = GetComponent<PlayerSkills>();
         }
 
         void OnEnable()
         {
             input.AttackPressed += OnAttackPressed;
-            movement.DodgeStarted += EndAttack;
+            movement.DodgeStarted += CancelAttack;
         }
 
         void OnDisable()
         {
             input.AttackPressed -= OnAttackPressed;
-            movement.DodgeStarted -= EndAttack;
-            EndAttack();
+            movement.DodgeStarted -= CancelAttack;
+            CancelAttack();
             if (hitStopRunning)
             {
-                Time.timeScale = 1f;
+                if (Mathf.Approximately(Time.timeScale, HitStopTimeScale)) Time.timeScale = 1f;
                 hitStopRunning = false;
             }
+        }
+
+        /// <summary>Petite pause du jeu à l'impact (utilisée aussi par les compétences).</summary>
+        public void RequestHitStop(float duration)
+        {
+            if (duration > 0f && !hitStopRunning && isActiveAndEnabled) StartCoroutine(HitStop(duration));
+        }
+
+        public void CancelAttack()
+        {
+            if (!IsAttacking) return;
+            IsAttacking = false;
+            nextQueued = false;
+            movement.MovementLocked = false;
+            movement.ExternalVelocity = Vector3.zero;
+            if (swordPivot != null) swordPivot.localRotation = Quaternion.identity;
         }
 
         void OnAttackPressed()
         {
             if (movement.IsDodging || health.IsDead || combo.Length == 0) return;
+            if (skills != null && skills.IsCasting) return;
 
             if (!IsAttacking)
             {
@@ -146,81 +162,35 @@ namespace ShadowBlade.Player
             if (!hitDone && t >= current.hitMoment)
             {
                 hitDone = true;
-                DealDamage();
+                int hits = DamageUtility.DamageInSphere(transform.position + Vector3.up, current.range, current.damage,
+                    transform.position, health, forward: transform.forward, arc: current.arc);
+                if (hits > 0)
+                {
+                    Hit?.Invoke(ComboIndex, hits);
+                    RequestHitStop(hitStopDuration);
+                }
             }
 
             if (t >= 1f)
             {
                 if (nextQueued) StartStep(ComboIndex + 1);
-                else EndAttack();
+                else CancelAttack();
             }
         }
 
-        void EndAttack()
-        {
-            if (!IsAttacking) return;
-            IsAttacking = false;
-            nextQueued = false;
-            movement.MovementLocked = false;
-            movement.ExternalVelocity = Vector3.zero;
-            if (swordPivot != null) swordPivot.localRotation = Quaternion.identity;
-        }
-
-        void DealDamage()
-        {
-            hitThisSwing.Clear();
-            Vector3 center = transform.position + Vector3.up;
-            int count = Physics.OverlapSphereNonAlloc(center, current.range, overlapBuffer, hitMask, QueryTriggerInteraction.Ignore);
-
-            int hits = 0;
-            for (int i = 0; i < count; i++)
-            {
-                Health target = overlapBuffer[i].GetComponentInParent<Health>();
-                if (target == null || target == health || target.IsDead || !hitThisSwing.Add(target)) continue;
-
-                Vector3 toTarget = target.transform.position - transform.position;
-                toTarget.y = 0f;
-                if (current.arc < 360f && toTarget.sqrMagnitude > 0.01f &&
-                    Vector3.Angle(transform.forward, toTarget) > current.arc * 0.5f)
-                    continue;
-
-                if (target.TakeDamage(current.damage, transform.position)) hits++;
-            }
-
-            if (hits > 0)
-            {
-                Hit?.Invoke(ComboIndex, hits);
-                if (hitStopDuration > 0f && !hitStopRunning) StartCoroutine(HitStop());
-            }
-        }
-
-        IEnumerator HitStop()
+        IEnumerator HitStop(float duration)
         {
             hitStopRunning = true;
-            Time.timeScale = 0.05f;
-            yield return new WaitForSecondsRealtime(hitStopDuration);
-            Time.timeScale = 1f;
+            Time.timeScale = HitStopTimeScale;
+            yield return new WaitForSecondsRealtime(duration);
+            // Ne pas relancer le temps si le jeu a été mis en pause entre-temps.
+            if (Mathf.Approximately(Time.timeScale, HitStopTimeScale)) Time.timeScale = 1f;
             hitStopRunning = false;
         }
 
         Vector3 FindAimDirection()
         {
-            Health nearest = null;
-            float bestDistance = float.MaxValue;
-            int count = Physics.OverlapSphereNonAlloc(transform.position, autoAimRadius, overlapBuffer, hitMask, QueryTriggerInteraction.Ignore);
-            for (int i = 0; i < count; i++)
-            {
-                Health target = overlapBuffer[i].GetComponentInParent<Health>();
-                if (target == null || target == health || target.IsDead) continue;
-
-                float distance = (target.transform.position - transform.position).sqrMagnitude;
-                if (distance < bestDistance)
-                {
-                    bestDistance = distance;
-                    nearest = target;
-                }
-            }
-
+            Health nearest = DamageUtility.FindNearest(transform.position, autoAimRadius, health);
             if (nearest != null) return nearest.transform.position - transform.position;
 
             Vector3 stick = movement.MoveDirection;

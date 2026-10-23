@@ -13,6 +13,10 @@ namespace ShadowBlade.Enemies
     [RequireComponent(typeof(NavMeshAgent), typeof(Health))]
     public class EnemyAI : MonoBehaviour
     {
+        [Header("Identité")]
+        [SerializeField] string displayName = "Goule";
+        [SerializeField] int goldReward = 5;
+
         [Header("Attaque")]
         [SerializeField] float attackRange = 1.8f;
         [SerializeField] float attackDamage = 8f;
@@ -23,9 +27,22 @@ namespace ShadowBlade.Enemies
         [Tooltip("Cercle affiché au sol pendant l'avertissement.")]
         [SerializeField] Transform telegraph;
 
+        [Header("Attaque lourde (boss)")]
+        [Tooltip("Toutes les N attaques, une frappe de zone plus lente et plus forte. 0 = jamais.")]
+        [SerializeField] int heavyAttackEvery;
+        [SerializeField] float heavyRadius = 4f;
+        [SerializeField] float heavyDamage = 25f;
+        [SerializeField] float heavyWindup = 1.2f;
+
         [Header("Réaction aux coups")]
+        [Tooltip("Les coups n'interrompent pas l'ennemi et ne le font pas reculer (boss).")]
+        [SerializeField] bool superArmor;
         [SerializeField] float staggerDuration = 0.35f;
         [SerializeField] float knockbackDistance = 0.8f;
+
+        public string DisplayName => displayName;
+        public int GoldReward => goldReward;
+        public Health Health => health;
 
         public event Action<EnemyAI> Died;
 
@@ -38,6 +55,9 @@ namespace ShadowBlade.Enemies
         float stateTimer;
         float cooldownTimer;
         Vector3 telegraphFullScale;
+        int attackCount;
+        bool heavyAttack;
+        float windupTotal;
 
         void Awake()
         {
@@ -85,8 +105,11 @@ namespace ShadowBlade.Enemies
                     agent.SetDestination(target.transform.position);
                     if (distance <= attackRange && cooldownTimer <= 0f)
                     {
+                        attackCount++;
+                        heavyAttack = heavyAttackEvery > 0 && attackCount % heavyAttackEvery == 0;
+                        windupTotal = heavyAttack ? heavyWindup : windupDuration;
                         state = State.Windup;
-                        stateTimer = windupDuration;
+                        stateTimer = windupTotal;
                         StopAgent();
                         ShowTelegraph(true);
                     }
@@ -95,13 +118,26 @@ namespace ShadowBlade.Enemies
                 case State.Windup:
                     FaceTowards(toTarget, dt);
                     if (telegraph != null)
-                        telegraph.localScale = telegraphFullScale * Mathf.Lerp(0.2f, 1f, 1f - stateTimer / windupDuration);
+                    {
+                        // Le cercle de l'attaque lourde est plus grand : il couvre toute la zone touchée.
+                        float sizeFactor = heavyAttack && attackRange > 0f ? heavyRadius / attackRange : 1f;
+                        float progress = Mathf.Lerp(0.2f, 1f, 1f - stateTimer / windupTotal);
+                        telegraph.localScale = Vector3.Scale(telegraphFullScale, new Vector3(sizeFactor, 1f, sizeFactor)) * progress;
+                    }
                     if (stateTimer <= 0f)
                     {
                         ShowTelegraph(false);
-                        bool inFront = Vector3.Angle(transform.forward, toTarget) < 70f;
-                        if (distance <= attackRange + 0.4f && inFront)
-                            target.TakeDamage(attackDamage, transform.position);
+                        if (heavyAttack)
+                        {
+                            if (distance <= heavyRadius)
+                                target.TakeDamage(heavyDamage, transform.position);
+                        }
+                        else
+                        {
+                            bool inFront = Vector3.Angle(transform.forward, toTarget) < 70f;
+                            if (distance <= attackRange + 0.4f && inFront)
+                                target.TakeDamage(attackDamage, transform.position);
+                        }
                         state = State.Recover;
                         stateTimer = recoveryDuration;
                         cooldownTimer = attackCooldown;
@@ -117,7 +153,7 @@ namespace ShadowBlade.Enemies
 
         void OnDamaged(float amount, Vector3 source)
         {
-            if (state == State.Dead || !agent.isOnNavMesh) return;
+            if (state == State.Dead || superArmor || !agent.isOnNavMesh) return;
 
             ShowTelegraph(false);
             state = State.Stagger;

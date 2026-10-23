@@ -12,14 +12,25 @@ namespace ShadowBlade.Player
     /// </summary>
     public class PlayerInputReader : MonoBehaviour
     {
+        /// <summary>Touches des compétences 1, 2, 3 : clavier puis manette.</summary>
+        static readonly string[][] SkillBindings =
+        {
+            new[] { "<Keyboard>/1", "<Gamepad>/buttonNorth" },
+            new[] { "<Keyboard>/2", "<Gamepad>/leftShoulder" },
+            new[] { "<Keyboard>/3", "<Gamepad>/rightShoulder" },
+        };
+
         public Vector2 Move { get; private set; }
 
         public event Action DodgePressed;
         public event Action AttackPressed;
+        /// <summary>Indice de la compétence (0, 1 ou 2).</summary>
+        public event Action<int> SkillPressed;
 
         InputAction moveAction;
         InputAction dodgeAction;
         InputAction attackAction;
+        InputAction[] skillActions;
 
         void Awake()
         {
@@ -46,6 +57,16 @@ namespace ShadowBlade.Player
 
             dodgeAction.performed += _ => DodgePressed?.Invoke();
             attackAction.performed += _ => AttackPressed?.Invoke();
+
+            skillActions = new InputAction[SkillBindings.Length];
+            for (int i = 0; i < SkillBindings.Length; i++)
+            {
+                int index = i;
+                var action = new InputAction("Skill" + (i + 1), InputActionType.Button);
+                foreach (string binding in SkillBindings[i]) action.AddBinding(binding);
+                action.performed += _ => SkillPressed?.Invoke(index);
+                skillActions[i] = action;
+            }
         }
 
         void OnEnable()
@@ -53,6 +74,7 @@ namespace ShadowBlade.Player
             moveAction.Enable();
             dodgeAction.Enable();
             attackAction.Enable();
+            foreach (InputAction action in skillActions) action.Enable();
         }
 
         void OnDisable()
@@ -60,6 +82,7 @@ namespace ShadowBlade.Player
             moveAction.Disable();
             dodgeAction.Disable();
             attackAction.Disable();
+            foreach (InputAction action in skillActions) action.Disable();
             Move = Vector2.zero;
         }
 
@@ -68,6 +91,7 @@ namespace ShadowBlade.Player
             moveAction.Dispose();
             dodgeAction.Dispose();
             attackAction.Dispose();
+            foreach (InputAction action in skillActions) action.Dispose();
         }
 
         void Update()

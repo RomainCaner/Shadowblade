@@ -10,40 +10,56 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.AI;
-using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.OnScreen;
-using UnityEngine.InputSystem.UI;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
+using static ShadowBlade.EditorTools.BuilderUtility;
 
 namespace ShadowBlade.EditorTools
 {
     /// <summary>
-    /// Construit la scène de test "Arena" : sol, murs, piliers, héros provisoire (capsule),
-    /// ennemis en vagues, caméra Cinemachine, HUD et contrôles tactiles.
-    /// Menu : ShadowBlade > Construire l'arène de test.
-    /// Relancer l'outil écrase la scène Arena et le prefab Enemy existants.
+    /// Construit la scène de combat "Arena" : décor, héros provisoire, ennemis et boss (prefabs),
+    /// caméra Cinemachine, HUD et contrôles tactiles.
+    /// Relancer l'outil écrase la scène Arena et les prefabs Enemy / Boss existants.
     /// </summary>
     public static class ArenaBuilder
     {
-        const string ScenePath = "Assets/Scenes/Arena.unity";
-        const string MaterialsFolder = "Assets/_Project/Materials";
-        const string PrefabsFolder = "Assets/_Project/Prefabs";
+        class EnemySpec
+        {
+            public string PrefabName;
+            public string DisplayName;
+            public float Scale = 1f;
+            public float Health = 40f;
+            public float Speed = 3.5f;
+            public float Damage = 8f;
+            public float AttackRange = 1.8f;
+            public float Windup = 0.7f;
+            public int Gold = 5;
+            public bool SuperArmor;
+            public int HeavyEvery;
+            public float HeavyRadius = 4f;
+            public float HeavyDamage = 25f;
+            public float HeavyWindup = 1.2f;
+            public bool WorldHealthBar = true;
+            public bool Horns;
+            public Material Body;
+            public Material Eyes;
+            public Material Telegraph;
+        }
 
-        [MenuItem("ShadowBlade/Construire l'arène de test")]
+        [MenuItem("ShadowBlade/Construire l'arène de test", priority = 20)]
         public static void BuildFromMenu()
         {
             if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
-            Build();
+            BuildScene();
         }
 
         /// <summary>Point d'entrée pour Unity en ligne de commande (-executeMethod).</summary>
-        public static void BuildFromCommandLine() => Build();
+        public static void BuildFromCommandLine() => BuildScene();
 
-        static void Build()
+        public static void BuildScene()
         {
             ConfigurePlayerSettings();
-            EnsureFolder(MaterialsFolder);
             EnsureFolder(PrefabsFolder);
 
             Scene scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
@@ -52,23 +68,50 @@ namespace ShadowBlade.EditorTools
             Material stone = CreateMaterial("Stone", new Color(0.45f, 0.42f, 0.4f));
             Material hero = CreateMaterial("Hero", new Color(0.2f, 0.45f, 0.85f));
             Material steel = CreateMaterial("Steel", new Color(0.85f, 0.85f, 0.9f), metallic: 0.8f);
-            Material enemy = CreateMaterial("Enemy", new Color(0.55f, 0.12f, 0.12f));
-            Material glow = CreateMaterial("EnemyEyes", new Color(1f, 0.75f, 0.2f));
+            Material shockwave = CreateMaterial("Shockwave", new Color(1f, 0.85f, 0.45f));
             Material telegraph = CreateMaterial("Telegraph", new Color(1f, 0.45f, 0.1f));
 
             BuildLevel(ground, stone);
-            GameObject player = BuildPlayer(hero, steel);
+            GameObject player = BuildPlayer(hero, steel, shockwave);
             BuildCamera(player.transform);
-            EnemyAI enemyPrefab = BuildEnemyPrefab(enemy, glow, telegraph);
-            Canvas ui = BuildUI(player.GetComponent<PlayerMovement>(), out Text waveText, out Text messageText);
-            BuildGameController(enemyPrefab, player.GetComponent<Health>(), waveText, messageText);
-            BuildPlayerHealthBar(ui.transform, player.GetComponent<Health>());
 
-            EditorSceneManager.SaveScene(scene, ScenePath);
-            EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
+            EnemyAI enemyPrefab = BuildEnemyPrefab(new EnemySpec
+            {
+                PrefabName = "Enemy",
+                DisplayName = "Goule",
+                Body = CreateMaterial("Enemy", new Color(0.55f, 0.12f, 0.12f)),
+                Eyes = CreateMaterial("EnemyEyes", new Color(1f, 0.75f, 0.2f)),
+                Telegraph = telegraph,
+            });
+            EnemyAI bossPrefab = BuildEnemyPrefab(new EnemySpec
+            {
+                PrefabName = "Boss",
+                DisplayName = "Seigneur des Cendres",
+                Scale = 1.8f,
+                Health = 400f,
+                Speed = 2.6f,
+                Damage = 15f,
+                AttackRange = 2.8f,
+                Windup = 0.8f,
+                Gold = 100,
+                SuperArmor = true,
+                HeavyEvery = 3,
+                HeavyRadius = 5f,
+                HeavyDamage = 30f,
+                HeavyWindup = 1.3f,
+                WorldHealthBar = false,
+                Horns = true,
+                Body = CreateMaterial("Boss", new Color(0.2f, 0.1f, 0.24f)),
+                Eyes = CreateMaterial("BossEyes", new Color(1f, 0.2f, 0.1f)),
+                Telegraph = telegraph,
+            });
+
+            BuildHud(player, enemyPrefab, bossPrefab);
+
+            EditorSceneManager.SaveScene(scene, ArenaScenePath);
+            UpdateBuildScenes();
             AssetDatabase.SaveAssets();
-
-            Debug.Log("ARENA_BUILT " + ScenePath);
+            Debug.Log("ARENA_BUILT " + ArenaScenePath);
         }
 
         static void ConfigurePlayerSettings()
@@ -135,7 +178,7 @@ namespace ShadowBlade.EditorTools
 
         // ---------------------------------------------------------------- Héros
 
-        static GameObject BuildPlayer(Material hero, Material steel)
+        static GameObject BuildPlayer(Material hero, Material steel, Material shockwave)
         {
             var player = new GameObject("Player") { tag = "Player" };
             player.transform.position = new Vector3(0f, 0.1f, 0f);
@@ -149,34 +192,17 @@ namespace ShadowBlade.EditorTools
             player.AddComponent<PlayerInputReader>();
             var movement = player.AddComponent<PlayerMovement>();
             var combat = player.AddComponent<PlayerCombat>();
+            var skills = player.AddComponent<PlayerSkills>();
             var flash = player.AddComponent<HitFlash>();
-            SetSerialized(flash, "flashColor", new Color(1f, 0.2f, 0.2f));
+            Set(flash, "flashColor", new Color(1f, 0.2f, 0.2f));
 
-            // Le pivot du visuel est au centre du corps pour que la roulade tourne sur elle-même.
-            var visual = new GameObject("Visual").transform;
-            visual.SetParent(player.transform, false);
-            visual.localPosition = new Vector3(0f, 1f, 0f);
+            Transform visual = BuildHeroVisual(player.transform, hero, steel, out Transform swordPivot);
 
-            GameObject body = CreateVisualPrimitive(PrimitiveType.Capsule, "Body", visual, hero);
-            body.transform.localScale = new Vector3(0.8f, 1f, 0.8f);
-
-            // Petit "visage" pour voir dans quelle direction regarde le héros.
-            GameObject face = CreateVisualPrimitive(PrimitiveType.Cube, "Face", visual, steel);
-            face.transform.localPosition = new Vector3(0f, 0.5f, 0.35f);
-            face.transform.localScale = new Vector3(0.4f, 0.15f, 0.15f);
-
-            // L'épée tourne autour de ce pivot pendant les coups.
-            var swordPivot = new GameObject("SwordPivot").transform;
-            swordPivot.SetParent(visual, false);
-            swordPivot.localPosition = new Vector3(0f, 0f, 0.1f);
-
-            GameObject sword = CreateVisualPrimitive(PrimitiveType.Cube, "Sword", swordPivot, steel);
-            sword.transform.localPosition = new Vector3(0f, 0f, 0.95f);
-            sword.transform.localScale = new Vector3(0.08f, 0.08f, 1.4f);
-
-            SetSerialized(movement, "visual", visual);
-            SetSerialized(combat, "swordPivot", swordPivot);
-
+            Set(movement, "visual", visual);
+            Set(combat, "swordPivot", swordPivot);
+            Set(skills, "visual", visual);
+            Set(skills, "swordPivot", swordPivot);
+            Set(skills, "effectMaterial", shockwave);
             return player;
         }
 
@@ -206,62 +232,83 @@ namespace ShadowBlade.EditorTools
 
         // ---------------------------------------------------------------- Ennemis
 
-        static EnemyAI BuildEnemyPrefab(Material body, Material eyes, Material telegraphMaterial)
+        static EnemyAI BuildEnemyPrefab(EnemySpec spec)
         {
-            const float attackRange = 1.8f;
-
-            var root = new GameObject("Enemy");
+            float s = spec.Scale;
+            var root = new GameObject(spec.PrefabName);
 
             var capsule = root.AddComponent<CapsuleCollider>();
-            capsule.center = new Vector3(0f, 1f, 0f);
-            capsule.height = 2f;
-            capsule.radius = 0.45f;
+            capsule.center = new Vector3(0f, s, 0f);
+            capsule.height = 2f * s;
+            capsule.radius = 0.45f * s;
 
             var agent = root.AddComponent<NavMeshAgent>();
-            agent.speed = 3.5f;
+            agent.speed = spec.Speed;
             agent.angularSpeed = 720f;
             agent.acceleration = 20f;
-            agent.stoppingDistance = 1.3f;
-            agent.radius = 0.45f;
-            agent.height = 2f;
+            agent.stoppingDistance = spec.AttackRange * 0.7f;
+            agent.radius = 0.45f * s;
+            agent.height = 2f * s;
 
             var health = root.AddComponent<Health>();
-            SetSerialized(health, "maxHealth", 40f);
+            Set(health, "maxHealth", spec.Health);
             root.AddComponent<HitFlash>();
+
             var ai = root.AddComponent<EnemyAI>();
+            Set(ai, "displayName", spec.DisplayName);
+            Set(ai, "goldReward", spec.Gold);
+            Set(ai, "attackRange", spec.AttackRange);
+            Set(ai, "attackDamage", spec.Damage);
+            Set(ai, "windupDuration", spec.Windup);
+            Set(ai, "superArmor", spec.SuperArmor);
+            Set(ai, "heavyAttackEvery", spec.HeavyEvery);
+            Set(ai, "heavyRadius", spec.HeavyRadius);
+            Set(ai, "heavyDamage", spec.HeavyDamage);
+            Set(ai, "heavyWindup", spec.HeavyWindup);
 
             var visual = new GameObject("Visual").transform;
             visual.SetParent(root.transform, false);
-            visual.localPosition = new Vector3(0f, 1f, 0f);
+            visual.localPosition = new Vector3(0f, s, 0f);
+            visual.localScale = Vector3.one * s;
 
-            GameObject bodyObject = CreateVisualPrimitive(PrimitiveType.Capsule, "Body", visual, body);
-            bodyObject.transform.localScale = new Vector3(0.9f, 1f, 0.9f);
+            GameObject body = CreateVisualPrimitive(PrimitiveType.Capsule, "Body", visual, spec.Body);
+            body.transform.localScale = new Vector3(0.9f, 1f, 0.9f);
 
-            GameObject eyesObject = CreateVisualPrimitive(PrimitiveType.Cube, "Eyes", visual, eyes);
-            eyesObject.transform.localPosition = new Vector3(0f, 0.5f, 0.38f);
-            eyesObject.transform.localScale = new Vector3(0.5f, 0.12f, 0.12f);
+            GameObject eyes = CreateVisualPrimitive(PrimitiveType.Cube, "Eyes", visual, spec.Eyes);
+            eyes.transform.localPosition = new Vector3(0f, 0.5f, 0.38f);
+            eyes.transform.localScale = new Vector3(0.5f, 0.12f, 0.12f);
+
+            if (spec.Horns)
+            {
+                for (int side = -1; side <= 1; side += 2)
+                {
+                    GameObject horn = CreateVisualPrimitive(PrimitiveType.Cube, "Horn", visual, spec.Eyes);
+                    horn.transform.localPosition = new Vector3(0.25f * side, 0.95f, 0.05f);
+                    horn.transform.localRotation = Quaternion.Euler(0f, 0f, -25f * side);
+                    horn.transform.localScale = new Vector3(0.1f, 0.4f, 0.1f);
+                }
+            }
 
             // Cercle d'avertissement au sol, affiché juste avant que l'ennemi frappe.
-            GameObject telegraph = CreateVisualPrimitive(PrimitiveType.Cylinder, "Telegraph", root.transform, telegraphMaterial);
+            GameObject telegraph = CreateVisualPrimitive(PrimitiveType.Cylinder, "Telegraph", root.transform, spec.Telegraph);
             telegraph.transform.localPosition = new Vector3(0f, 0.03f, 0f);
-            telegraph.transform.localScale = new Vector3(attackRange * 2f, 0.01f, attackRange * 2f);
-            SetSerialized(ai, "telegraph", telegraph.transform);
-            SetSerialized(ai, "attackRange", attackRange);
+            telegraph.transform.localScale = new Vector3(spec.AttackRange * 2f, 0.01f, spec.AttackRange * 2f);
+            Set(ai, "telegraph", telegraph.transform);
 
-            BuildEnemyHealthBar(root.transform);
+            if (spec.WorldHealthBar) BuildEnemyHealthBar(root.transform, 2f * s + 0.5f);
 
-            string path = PrefabsFolder + "/Enemy.prefab";
+            string path = $"{PrefabsFolder}/{spec.PrefabName}.prefab";
             GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, path);
             Object.DestroyImmediate(root);
             return prefab.GetComponent<EnemyAI>();
         }
 
-        static void BuildEnemyHealthBar(Transform parent)
+        static void BuildEnemyHealthBar(Transform parent, float height)
         {
             var barObject = new GameObject("HealthBar", typeof(RectTransform));
             barObject.transform.SetParent(parent, false);
             var rect = (RectTransform)barObject.transform;
-            rect.localPosition = new Vector3(0f, 2.5f, 0f);
+            rect.localPosition = new Vector3(0f, height, 0f);
             rect.sizeDelta = new Vector2(100f, 12f);
             rect.localScale = Vector3.one * 0.012f;
 
@@ -271,273 +318,144 @@ namespace ShadowBlade.EditorTools
 
             RectTransform fill = CreateBar(barObject.transform, new Color(0.9f, 0.2f, 0.15f));
             var bar = barObject.AddComponent<HealthBar>();
-            SetSerialized(bar, "fill", fill);
-            SetSerialized(bar, "hideWhenFull", true);
+            Set(bar, "fill", fill);
+            Set(bar, "hideWhenFull", true);
         }
 
-        static void BuildGameController(EnemyAI enemyPrefab, Health player, Text waveText, Text messageText)
+        // ---------------------------------------------------------------- HUD et partie
+
+        static void BuildHud(GameObject player, EnemyAI enemyPrefab, EnemyAI bossPrefab)
         {
+            CreateEventSystem();
+            Canvas canvas = CreateCanvas("UI");
+            Transform ui = canvas.transform;
+
+            var movement = player.GetComponent<PlayerMovement>();
+            var skills = player.GetComponent<PlayerSkills>();
+            var health = player.GetComponent<Health>();
+
+            BuildTouchControls(ui, movement, skills);
+
+            // Barre de vie du héros (en haut à gauche).
+            RectTransform hp = CreateRect("PlayerHealth", ui, new Vector2(0f, 1f), new Vector2(270f, -57f), new Vector2(460f, 34f));
+            RectTransform hpFill = CreateBar(hp, new Color(0.3f, 0.85f, 0.35f));
+            var hpBar = hp.gameObject.AddComponent<HealthBar>();
+            Set(hpBar, "health", health);
+            Set(hpBar, "fill", hpFill);
+            CreateLabel(hp, "PV", 24);
+
+            Text waveText = CreateText("WaveText", ui, "", 34, new Vector2(0.5f, 1f), new Vector2(0f, -55f), new Vector2(1100f, 60f));
+            Text goldText = CreateText("GoldText", ui, "Or  +0", 32, new Vector2(1f, 1f), new Vector2(-330f, -60f),
+                new Vector2(300f, 60f), TextAnchor.MiddleRight, Gold);
+            Button pause = CreateButton("PauseButton", ui, "II", new Vector2(1f, 1f), new Vector2(-90f, -60f),
+                new Vector2(100f, 90f), new Color(0f, 0f, 0f, 0.5f), 40);
+
+            // Barre du boss (en haut au centre, cachée tant qu'aucun boss n'est là).
+            RectTransform bossBar = CreateRect("BossBar", ui, new Vector2(0.5f, 1f), new Vector2(0f, -145f), new Vector2(900f, 80f));
+            Text bossName = CreateText("BossName", bossBar, "Boss", 32, new Vector2(0.5f, 1f), new Vector2(0f, -18f),
+                new Vector2(900f, 40f), color: new Color(1f, 0.6f, 0.4f));
+            RectTransform bossFillRoot = CreateRect("Bar", bossBar, new Vector2(0.5f, 0f), new Vector2(0f, 18f), new Vector2(860f, 28f));
+            RectTransform bossFill = CreateBar(bossFillRoot, new Color(0.85f, 0.15f, 0.25f));
+            var bossHealthBar = bossFillRoot.gameObject.AddComponent<HealthBar>();
+            Set(bossHealthBar, "fill", bossFill);
+
+            Text message = CreateText("Message", ui, "", 90, new Vector2(0.5f, 0.5f), new Vector2(0f, 150f), new Vector2(1400f, 300f));
+
+            ModalPanel modal = CreateModal(ui);
+
+            // Points d'apparition dans les coins de l'arène.
             var spawnRoot = new GameObject("SpawnPoints").transform;
             Vector3[] positions =
             {
                 new Vector3(-18f, 0f, 18f), new Vector3(18f, 0f, 18f),
                 new Vector3(18f, 0f, -18f), new Vector3(-18f, 0f, -18f),
             };
-            var points = new Transform[positions.Length];
+            var points = new Object[positions.Length];
             for (int i = 0; i < positions.Length; i++)
             {
-                points[i] = new GameObject("Spawn_" + (i + 1)).transform;
-                points[i].SetParent(spawnRoot);
-                points[i].position = positions[i];
+                var point = new GameObject("Spawn_" + (i + 1)).transform;
+                point.SetParent(spawnRoot);
+                point.position = positions[i];
+                points[i] = point;
             }
 
-            var controllerObject = new GameObject("ArenaGame");
-            var controller = controllerObject.AddComponent<ArenaGameController>();
-            var so = new SerializedObject(controller);
-            so.FindProperty("enemyPrefab").objectReferenceValue = enemyPrefab;
-            so.FindProperty("player").objectReferenceValue = player;
-            so.FindProperty("waveText").objectReferenceValue = waveText;
-            so.FindProperty("messageText").objectReferenceValue = messageText;
-            SerializedProperty spawnPoints = so.FindProperty("spawnPoints");
-            spawnPoints.arraySize = points.Length;
-            for (int i = 0; i < points.Length; i++)
-                spawnPoints.GetArrayElementAtIndex(i).objectReferenceValue = points[i];
-            so.ApplyModifiedPropertiesWithoutUndo();
+            var game = new GameObject("ArenaGame").AddComponent<ArenaGameController>();
+            Set(game, "enemyPrefab", enemyPrefab);
+            Set(game, "bossPrefab", bossPrefab);
+            Set(game, "player", health);
+            SetArray(game, "spawnPoints", points);
+            Set(game, "waveText", waveText);
+            Set(game, "goldText", goldText);
+            Set(game, "messageText", message);
+            Set(game, "modal", modal);
+            Set(game, "pauseButton", pause);
+            Set(game, "bossBar", bossBar.gameObject);
+            Set(game, "bossNameText", bossName);
+            Set(game, "bossHealthBar", bossHealthBar);
         }
 
-        // ---------------------------------------------------------------- Interface
-
-        static Canvas BuildUI(PlayerMovement player, out Text waveText, out Text messageText)
+        static void BuildTouchControls(Transform ui, PlayerMovement movement, PlayerSkills skills)
         {
-            var eventSystem = new GameObject("EventSystem");
-            eventSystem.AddComponent<EventSystem>();
-            eventSystem.AddComponent<InputSystemUIInputModule>();
-
-            var canvasObject = new GameObject("UI");
-            var canvas = canvasObject.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            var scaler = canvasObject.AddComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1920f, 1080f);
-            scaler.matchWidthOrHeight = 0.5f;
-            canvasObject.AddComponent<GraphicRaycaster>();
-
-            Sprite knob = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/Knob.psd");
-            Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-
             // Joystick : en bas à gauche.
-            RectTransform stickBase = CreateImage("Joystick", canvasObject.transform, knob,
-                new Color(1f, 1f, 1f, 0.2f), new Vector2(0f, 0f), new Vector2(280f, 260f), Vector2.one * 320f);
-            RectTransform handle = CreateImage("Handle", stickBase, knob,
-                new Color(1f, 1f, 1f, 0.6f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.one * 140f);
+            RectTransform stickBase = CreateImage("Joystick", ui, Knob, new Color(1f, 1f, 1f, 0.2f),
+                new Vector2(0f, 0f), new Vector2(280f, 260f), Vector2.one * 320f);
+            RectTransform handle = CreateImage("Handle", stickBase, Knob, new Color(1f, 1f, 1f, 0.6f),
+                new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.one * 140f);
             var stick = handle.gameObject.AddComponent<OnScreenStick>();
-            SetSerialized(stick, "m_ControlPath", "<Gamepad>/leftStick");
-            SetSerialized(stick, "m_MovementRange", 110f);
+            Set(stick, "m_ControlPath", "<Gamepad>/leftStick");
+            Set(stick, "m_MovementRange", 110f);
 
-            // Bouton d'attaque (gros) et d'esquive : en bas à droite.
-            RectTransform attack = CreateButton("AttackButton", "Attaque", canvasObject.transform, knob, font,
-                new Color(0.85f, 0.25f, 0.2f, 0.55f), new Vector2(-260f, 230f), 240f, "<Gamepad>/buttonWest");
-            RectTransform dodge = CreateButton("DodgeButton", "Esquive", canvasObject.transform, knob, font,
-                new Color(0.25f, 0.6f, 0.95f, 0.55f), new Vector2(-520f, 150f), 170f, "<Gamepad>/buttonEast");
+            // Bas à droite : gros bouton d'attaque, compétences en arc autour, esquive au-dessus.
+            RectTransform attack = CreateTouchButton("AttackButton", "Attaque", ui, new Color(0.85f, 0.25f, 0.2f, 0.6f),
+                new Vector2(-230f, 220f), 250f, "<Gamepad>/buttonWest", 40);
 
-            RectTransform cooldown = CreateImage("Cooldown", dodge, knob,
-                new Color(0f, 0f, 0f, 0.55f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.one * 170f);
-            Image cooldownImage = cooldown.GetComponent<Image>();
-            cooldownImage.type = Image.Type.Filled;
-            cooldownImage.fillMethod = Image.FillMethod.Radial360;
-            cooldownImage.fillOrigin = (int)Image.Origin360.Top;
-            cooldownImage.fillAmount = 0f;
-            cooldownImage.raycastTarget = false;
-            var overlay = cooldown.gameObject.AddComponent<DodgeCooldownOverlay>();
-            SetSerialized(overlay, "player", player);
+            string[] names = { "Charge", "Tourbillon", "Frappe\nsismique" };
+            string[] paths = { "<Gamepad>/buttonNorth", "<Gamepad>/leftShoulder", "<Gamepad>/rightShoulder" };
+            Vector2[] positions = { new Vector2(-495f, 140f), new Vector2(-480f, 375f), new Vector2(-270f, 495f) };
+            for (int i = 0; i < names.Length; i++)
+            {
+                RectTransform button = CreateTouchButton("Skill" + (i + 1), names[i], ui, new Color(0.95f, 0.65f, 0.2f, 0.6f),
+                    positions[i], 150f, paths[i], 24);
+                Image overlay = CreateCooldownOverlay(button, 150f);
+                Text timer = CreateText("Timer", button, "", 56, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.one * 150f);
+
+                var cooldown = button.gameObject.AddComponent<SkillButtonCooldown>();
+                Set(cooldown, "skills", skills);
+                Set(cooldown, "skillIndex", i);
+                Set(cooldown, "overlay", overlay);
+                Set(cooldown, "timerText", timer);
+            }
+
+            RectTransform dodge = CreateTouchButton("DodgeButton", "Esquive", ui, new Color(0.25f, 0.6f, 0.95f, 0.6f),
+                new Vector2(-100f, 440f), 130f, "<Gamepad>/buttonEast", 24);
+            Image dodgeOverlay = CreateCooldownOverlay(dodge, 130f);
+            var dodgeCooldown = dodgeOverlay.gameObject.AddComponent<DodgeCooldownOverlay>();
+            Set(dodgeCooldown, "player", movement);
 
             attack.SetAsLastSibling();
-
-            waveText = CreateText("WaveText", canvasObject.transform, font, 38,
-                new Vector2(0.5f, 1f), new Vector2(0f, -55f), new Vector2(900f, 70f));
-            messageText = CreateText("Message", canvasObject.transform, font, 90,
-                new Vector2(0.5f, 0.5f), new Vector2(0f, 120f), new Vector2(1400f, 300f));
-
-            return canvas;
         }
 
-        static void BuildPlayerHealthBar(Transform canvas, Health player)
+        static RectTransform CreateTouchButton(string name, string label, Transform parent, Color color,
+            Vector2 position, float size, string controlPath, int fontSize)
         {
-            var root = new GameObject("PlayerHealth", typeof(RectTransform));
-            root.transform.SetParent(canvas, false);
-            var rect = (RectTransform)root.transform;
-            rect.anchorMin = rect.anchorMax = new Vector2(0f, 1f);
-            rect.pivot = new Vector2(0f, 1f);
-            rect.anchoredPosition = new Vector2(40f, -40f);
-            rect.sizeDelta = new Vector2(460f, 34f);
-
-            RectTransform fill = CreateBar(root.transform, new Color(0.3f, 0.85f, 0.35f));
-            var bar = root.AddComponent<HealthBar>();
-            SetSerialized(bar, "health", player);
-            SetSerialized(bar, "fill", fill);
-
-            Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            Text label = CreateText("Label", root.transform, font, 24,
-                new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(460f, 34f));
-            label.text = "PV";
-        }
-
-        /// <summary>Fond sombre + remplissage qui s'étire de gauche à droite. Renvoie le remplissage.</summary>
-        static RectTransform CreateBar(Transform parent, Color fillColor)
-        {
-            RectTransform background = CreateStretched("Background", parent);
-            background.gameObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.6f);
-
-            RectTransform fill = CreateStretched("Fill", parent);
-            fill.gameObject.AddComponent<Image>().color = fillColor;
-            return fill;
-        }
-
-        static RectTransform CreateStretched(string name, Transform parent)
-        {
-            var go = new GameObject(name, typeof(RectTransform));
-            go.transform.SetParent(parent, false);
-            var rect = (RectTransform)go.transform;
-            rect.anchorMin = Vector2.zero;
-            rect.anchorMax = Vector2.one;
-            rect.offsetMin = rect.offsetMax = Vector2.zero;
-            return rect;
-        }
-
-        static Text CreateText(string name, Transform parent, Font font, int fontSize,
-            Vector2 anchor, Vector2 position, Vector2 size)
-        {
-            var go = new GameObject(name, typeof(RectTransform));
-            go.transform.SetParent(parent, false);
-            var rect = (RectTransform)go.transform;
-            rect.anchorMin = rect.anchorMax = anchor;
-            rect.anchoredPosition = position;
-            rect.sizeDelta = size;
-            var text = go.AddComponent<Text>();
-            text.font = font;
-            text.fontSize = fontSize;
-            text.fontStyle = FontStyle.Bold;
-            text.alignment = TextAnchor.MiddleCenter;
-            text.color = Color.white;
-            text.raycastTarget = false;
-            go.AddComponent<Outline>().effectColor = new Color(0f, 0f, 0f, 0.8f);
-            return text;
-        }
-
-        static RectTransform CreateButton(string name, string label, Transform parent, Sprite sprite, Font font,
-            Color color, Vector2 position, float size, string controlPath)
-        {
-            RectTransform button = CreateImage(name, parent, sprite, color, new Vector2(1f, 0f), position, Vector2.one * size);
+            RectTransform button = CreateImage(name, parent, Knob, color, new Vector2(1f, 0f), position, Vector2.one * size);
             var onScreen = button.gameObject.AddComponent<OnScreenButton>();
-            SetSerialized(onScreen, "m_ControlPath", controlPath);
-
-            Text text = CreateText("Label", button, font, Mathf.RoundToInt(size * 0.17f),
-                new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.one * size);
-            text.text = label;
+            Set(onScreen, "m_ControlPath", controlPath);
+            CreateLabel(button, label, fontSize);
             return button;
         }
 
-        static RectTransform CreateImage(string name, Transform parent, Sprite sprite, Color color,
-            Vector2 anchor, Vector2 position, Vector2 size)
+        static Image CreateCooldownOverlay(Transform parent, float size)
         {
-            var go = new GameObject(name, typeof(RectTransform));
-            go.transform.SetParent(parent, false);
-            var rect = (RectTransform)go.transform;
-            rect.anchorMin = rect.anchorMax = anchor;
-            rect.pivot = new Vector2(0.5f, 0.5f);
-            rect.anchoredPosition = position;
-            rect.sizeDelta = size;
-            var image = go.AddComponent<Image>();
-            image.sprite = sprite;
-            image.color = color;
-            return rect;
-        }
-
-        // ---------------------------------------------------------------- Utilitaires
-
-        static void SetSerialized(Object target, string property, string value)
-        {
-            var so = new SerializedObject(target);
-            so.FindProperty(property).stringValue = value;
-            so.ApplyModifiedPropertiesWithoutUndo();
-        }
-
-        static void SetSerialized(Object target, string property, float value)
-        {
-            var so = new SerializedObject(target);
-            so.FindProperty(property).floatValue = value;
-            so.ApplyModifiedPropertiesWithoutUndo();
-        }
-
-        static void SetSerialized(Object target, string property, bool value)
-        {
-            var so = new SerializedObject(target);
-            so.FindProperty(property).boolValue = value;
-            so.ApplyModifiedPropertiesWithoutUndo();
-        }
-
-        static void SetSerialized(Object target, string property, Color value)
-        {
-            var so = new SerializedObject(target);
-            so.FindProperty(property).colorValue = value;
-            so.ApplyModifiedPropertiesWithoutUndo();
-        }
-
-        static void SetSerialized(Object target, string property, Object value)
-        {
-            var so = new SerializedObject(target);
-            so.FindProperty(property).objectReferenceValue = value;
-            so.ApplyModifiedPropertiesWithoutUndo();
-        }
-
-        static GameObject CreateBlock(string name, Vector3 position, Vector3 scale, Material material, Transform parent)
-        {
-            GameObject block = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            block.name = name;
-            block.transform.SetParent(parent);
-            block.transform.position = position;
-            block.transform.localScale = scale;
-            block.GetComponent<Renderer>().sharedMaterial = material;
-            block.isStatic = true;
-            return block;
-        }
-
-        static GameObject CreateVisualPrimitive(PrimitiveType type, string name, Transform parent, Material material)
-        {
-            GameObject go = GameObject.CreatePrimitive(type);
-            go.name = name;
-            go.transform.SetParent(parent, false);
-            Object.DestroyImmediate(go.GetComponent<Collider>()); // seul le collider racine gère les collisions
-            go.GetComponent<Renderer>().sharedMaterial = material;
-            return go;
-        }
-
-        static Material CreateMaterial(string name, Color color, float metallic = 0f)
-        {
-            string path = $"{MaterialsFolder}/{name}.mat";
-            var material = AssetDatabase.LoadAssetAtPath<Material>(path);
-            if (material == null)
-            {
-                material = new Material(Shader.Find("Universal Render Pipeline/Lit"));
-                AssetDatabase.CreateAsset(material, path);
-            }
-            material.SetColor("_BaseColor", color);
-            material.SetFloat("_Metallic", metallic);
-            material.SetFloat("_Smoothness", metallic > 0f ? 0.7f : 0.2f);
-            EditorUtility.SetDirty(material);
-            return material;
-        }
-
-        static void EnsureFolder(string path)
-        {
-            string[] parts = path.Split('/');
-            string current = parts[0];
-            for (int i = 1; i < parts.Length; i++)
-            {
-                string next = current + "/" + parts[i];
-                if (!AssetDatabase.IsValidFolder(next)) AssetDatabase.CreateFolder(current, parts[i]);
-                current = next;
-            }
+            RectTransform rect = CreateImage("Cooldown", parent, Knob, new Color(0f, 0f, 0f, 0.6f),
+                new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.one * size);
+            Image image = rect.GetComponent<Image>();
+            image.type = Image.Type.Filled;
+            image.fillMethod = Image.FillMethod.Radial360;
+            image.fillOrigin = (int)Image.Origin360.Top;
+            image.fillAmount = 0f;
+            image.raycastTarget = false;
+            return image;
         }
     }
 }
